@@ -1,0 +1,417 @@
+/////////////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE FUNCTIONS TO SUPPORT UAV TO LANDSAT BIOMASS MAPPING //
+/////////////////////////////////////////////////////////////////////////////
+
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// GENERAL PURPOSE
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// FUNCTION: getX
+// USE: Get X image/feature in a collection
+// PARAMETERS: 
+// X = number image/feature to get
+
+// NOTE: after using, cast to desired object type
+// e.g. var img = ee.Image(fxns.getX(img_col, 7))
+// e.g. var feat = ee.Feature(fxns.getX(feat_col, 7))
+
+exports.getX = function(collection, x) {
+  var list = collection.toList(collection.size());
+  return list.get(x);
+};
+
+// FUNCTION: clipImageCollection
+// USE: Clip an image collection using a feature collection
+// PARAMETERS: 
+// featCollection = feature collection to use for clipping
+
+exports.clipImageCollection = function(featCollection) {
+  var wrapper = function(image) {
+    var image_clip = image.clipToCollection(featCollection);
+    var image_update_geom = image_clip.set('system:footprint', image.geometry());
+    return image_update_geom;
+  };
+  return wrapper;
+};
+
+// FUNCTION: setYearProperty
+// USE: Apply with map to loop over an image collection and add the proper year to each image, drawing years from user input list
+
+exports.setYearProperty = function(yearsDict) {
+  var wrapper = function(image){
+    
+    var id = ee.String(image.get('system:index'));
+    var siteName = ee.String(id.split('_').get(0));
+    var year = yearsDict.get(siteName);
+    
+    return image.set('sample_year', year);
+    
+  };
+  return wrapper;
+};
+
+// FUNCTION: exportImageCollectionToAssetVariableCRS
+// USE: Export an image collection to asset, one image at a time, using the image's projection information and a given scale
+// PARAMETERS: 
+// collection = collection to export
+// suffix: string that will be added to the end of each image to add information -- if you want to use the original image name unchanged, simply enter '',
+// assetPath: string denoting path to already existing image collection in assets -- make sure to end with trailing slash -- image collection MUST already exist
+// scale: resolution (scale) in meters per pixel to use for the exported image
+// REFERENCES:
+// https://github.com/fitoprincipe/geetools-code-editor/blob/master/batch
+// https://github.com/fitoprincipe/geetools-code-editor/wiki/Batch#download
+
+exports.exportImageCollectionToAssetVariableCRS = function(collection, suffix, assetPath, scale){
+
+  var n = collection.size().getInfo();
+  var colList = collection.toList(n);
+
+  for (var i = 0; i < n; i++) {
+    
+    var img = ee.Image(colList.get(i)); // Get individual image
+    var name = ee.String(img.get('ID')).cat(suffix); // Get image name
+    name = name.getInfo();
+
+    // Old -- now throws 'The CRS of a map projection could not be parsed' error
+    // var crs = img.projection(); // Get image projection
+    
+    // New -- checked to confirm that image displays in same location when exporting with just CRS, not full projection
+    var crs = img.projection().crs(); // Get image CRS
+    crs = crs.getInfo();
+
+    Export.image.toAsset({
+      image: img,
+      description: name,
+      assetId: assetPath + name,
+      region: img.geometry().bounds(),
+      crs: crs,
+      scale: scale,
+      maxPixels: 1e13
+    });
+    
+  }
+};
+
+// FUNCTION: listToSingleValueImages
+// USE: Take a list of values, and return a list of images where each image is a constant image with the value specified by the list item
+
+exports.listToSingleValueImages = function(value){
+  return ee.Image.constant(value);
+};
+
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// UAV
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// FUNCTION: reduceResolution1m
+// USE: Reduce an image to a particular resolution and add bands for 1) sum of biomass for each larger pixel, 2) count of valid pixels used to calculate each larger pixel, 3) percentage of valid pixels used to calculate each larger pixel
+// PARAMETERS: 
+// scale = resolution to aggregate to
+
+exports.reduceResolution1m = function(scale){
+  
+  var wrapper = function(image){
+    
+    var proj = image.select('BIOMASS').projection();
+    
+    // SUM -----
+      
+    var sum = image.select('BIOMASS')
+      // Reduce resolution by summing cells
+      .reduceResolution({
+        reducer: ee.Reducer.sum().unweighted(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: proj,
+        scale: scale
+      })
+      .rename(['BIOMASS_g']);
+  
+    // PERCENT -----
+  
+    var percent = sum.mask().rename('PIXEL_PERCENT'); // Mask of the reduceResolution output denotes what percentage of a larger pixel is covered by smaller pixels
+    
+    // PERCENT COVER -----
+    
+    // Dummy reduce resolutions to produce pixel percent band
+    var dummy = image.select('COVER')
+      // Reduce resolution by counting cells
+      .reduceResolution({
+        reducer: ee.Reducer.count(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: proj,
+        scale: scale
+      });
+  
+    // Mask of the reduceResolution output denotes what percentage of a larger pixel is covered by smaller pixels 
+    var cover = dummy.mask().rename('PERCENT_COVER'); 
+
+    // Tidy up percent cover band
+    cover = cover.unmask(); // Convert masked pixels to zero
+    cover = cover.mask(sum.mask()); // Mask to site footprint
+
+    // COMBINE -----
+  
+    return sum.addBands(percent).addBands(cover);
+  
+  };
+  
+  return wrapper;
+  
+};
+
+// FUNCTION: reduceResolution30m
+// USE: Reduce an image to a particular resolution and add bands for 1) sum of biomass for each larger pixel, 2) count of valid pixels used to calculate each larger pixel, 3) percentage of valid pixels used to calculate each larger pixel
+// PARAMETERS: 
+// crs = crs for output images
+// crs_transform = crs transform for output images
+
+exports.reduceResolution30m = function(crs, crs_transform){
+  
+  var wrapper = function(image){
+    
+    // SUM -----
+      
+    var sum = image.select('BIOMASS_g_adjusted')
+      // Reduce resolution by summing cells
+      .reduceResolution({
+        reducer: ee.Reducer.sum().unweighted(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: crs,
+        crsTransform: crs_transform
+      })
+      .rename(['BIOMASS_g']);
+  
+    // PERCENT -----
+  
+    var percent = sum.mask().rename('PIXEL_PERCENT'); // Mask of the reduceResolution output denotes what percentage of a larger pixel is covered by smaller pixels
+
+    // PERCENT COVER -----
+
+    // var cover = image.select('PERCENT_COVER_adjusted')
+    var cover = image.select('PERCENT_COVER')
+      // Reduce resolution by averaging cells
+      .reduceResolution({
+        reducer: ee.Reducer.mean(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: crs,
+        crsTransform: crs_transform
+      })
+      .rename('PERCENT_COVER');
+  
+    // COMBINE -----
+  
+    return sum.addBands(percent).addBands(cover);
+  
+  };
+  
+  return wrapper;
+  
+};
+
+// FUNCTION: adjustBiomassSums
+// USE: Adjusts biomass sums to account for proportion of valid small pixels used to calculate larger pixel sum
+// NOTES:
+// Assume the missing part of the pixel had the same biomass as the observed part -- this way estimates may be wrong but are not biased
+// e.g. if the sum of biomass was 100 kg and you only observed 50% of the pixel, estimated biomass for that pixel would be 200 kg 
+
+exports.adjustBiomassSums = function(image){
+  
+  var biomass = image.select('BIOMASS_g');
+  var percent = image.select('PIXEL_PERCENT');
+  var biomass_adjusted = biomass.divide(percent).rename('BIOMASS_g_adjusted');
+
+  return image.addBands(biomass_adjusted);
+
+};
+
+// FUNCTION: maskByPixelPercent
+// USE: Given an image with a pixel percent band, retain only pixels that exceed some percentage threshold
+// PARAMETERS: 
+// percentage = percentage of smaller pixels needed within a larger pixel to retain the larger pixel e.g. 0.75
+
+exports.maskByPixelPercent = function(percentage){
+  var wrapper = function(image){
+    
+    // Mask to include only larger pixels where X percent of smaller pixels were used to calculate it
+    var mask = image.select('PIXEL_PERCENT').gte(percentage);
+    
+    // Mask the image and return it
+    return image.updateMask(mask);
+
+  };
+  return wrapper;
+};
+
+// FUNCTION: getPixelCentroids
+// USE: Get centroids for each pixel in an image (or map over image collection)
+
+exports.getPixelCentroids = function(image) {
+    return image.sample({
+      region: image.geometry().buffer(45), // Buffer by 45m - geometry is from unprojected image and cuts off some 30m pixels
+      geometries: true
+    });
+};
+
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// UAV to LS
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// FUNCTION: tidy_predictors_PFTs
+// USE: Tidy predictor names to match between training/model data and predictor stacks
+// NOTES: 
+// Tidies predictor and PFTs
+// Map over feature collection with coefficient data a from final models
+exports.tidy_predictors_PFTs = function(feat) {
+  
+  var predictor_name = ee.String(feat.get('predictor'));
+  
+  predictor_name = predictor_name.replace('\\(Intercept\\)', 'intercept').replace('predicted_cover_DECIDUOUS_SHRUBS', 'allDecShrub_cover').replace('predicted_cover_EVERGREEN_SHRUBS', 'allEvShrub_cover').replace('predicted_cover_FORBS', 'allForb_cover').replace('predicted_cover_GRAMINOIDS', 'graminoid_cover').replace('predicted_cover_LICHENS', 'tmlichen_light2_cover').replace('predicted_cover_cTREE', 'cTree_cover').replace('predicted_cover_bTREE', 'bTree_cover').replace('predicted_cover_decshrabs', 'decshrabs_cover').replace('predicted_cover_alnshr', 'alnshr_cover').replace('predicted_cover_betshr', 'betshr_cover').replace('predicted_cover_salshr', 'salshr_cover').replace('predicted_cover_talshr', 'talshr_cover').replace('\\(.+?\\)', 'LC').replace('as.factor', '');
+
+  var pft_name = ee.String(feat.get('pft'));
+  
+  pft_name = pft_name.replace('DECIDUOUS_SHRUBS', 'allDecShrub_cover').replace('EVERGREEN_SHRUBS', 'allEvShrub_cover').replace('FORBS', 'allForb_cover').replace('GRAMINOIDS', 'graminoid_cover').replace('LICHENS', 'tmlichen_light2_cover');
+  
+  return feat.set({predictor: predictor_name, pft: pft_name});
+  
+};
+
+// FUNCTION: barrensToZero
+// USE: Finds areas classified as 'Barren' by Wang LC maps and forces these predictions to zero biomass
+// NOTES: 
+// Map over biomass time series
+exports.barrensToZero = function(img){
+
+  // Bring in LC maps
+  var above_lc = ee.Image('projects/foreststructure/ABoVE/ORNL_DAAC/ABoVE_LandCover_v01'); 
+
+  // Get current year from biomass time series
+  var mask_year = ee.Number.parse(img.get('year')); 
+
+  // Format year for LC maps
+  var lc_year = ee.Algorithms.If(ee.Number(mask_year).gt(2014), 2014, mask_year); // Land cover only goes until 2014, if current year is later than that, default to the latest available year, 2014
+  var prefix = ee.String('y');
+  var lc_year_str = prefix.cat(ee.Number(lc_year).format('%.0f'));
+  
+  // Get current year from LC maps
+  var lc_img = ee.Image(above_lc.select([lc_year_str]));
+  
+  // Create mask
+  var mask = lc_img.neq(14); // Only keep pixels where land cover is not barren
+
+  // Multiply biomass images by masks (instead of 'updateMask')
+  // Masks are 1s and 0s -- wherever there is a 1, keep biomass value, wherever there is a 0, biomass is 0
+  return ee.Image(img.multiply(mask)).set('year', mask_year);
+  
+};
+
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// DICTIONARIES, PROJECTIONS
+// -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+exports.sampleYearDictionary = ee.Dictionary({
+THREEFINGER: 2018, 
+UPPERJOSEPH: 2018, 
+UPPERGOODPASTER: 2018, 
+MFFM: 2018, 
+UPPERPALDO: 2018, 
+STONE01: 2018, 
+STONE02: 2018, 
+SCHAR: 2018, 
+WICKERSHAM: 2018, 
+TWELVEMILE: 2018, 
+PRINDLE: 2018, 
+QUARTZ01: 2018, 
+QUARTZ02: 2018, 
+SALCHA: 2018, 
+GULCH: 2018, 
+RUBY: 2018, 
+GRANITE: 2018, 
+FRYINGPAN: 2018, 
+UMFFM: 2018, 
+MOLLYCREEK: 2018, 
+CARIBOUCREEK: 2018, 
+MOSQUITOCREEK: 2018, 
+TOPOFTHEWORLD: 2018, 
+AMSUMMIT: 2018, 
+MATSONCREEK: 2018, 
+NORTHLADUE: 2018, 
+HARTMTN: 2018, 
+SIXTYMILE: 2018, 
+TOWYK: 2018, 
+MTSTEWART: 2018, 
+WOLFCREEK: 2018, 
+MTLADEROUTE: 2018, 
+MTMCKLENNAN: 2018, 
+PORCUPINECREEK: 2019, 
+OGILVIE: 2019,  
+UPPERQUARRY: 2019, 
+LOWERQUARRY: 2019, 
+FIRTH: 2019, 
+PAGE: 2019, 
+CALF: 2019, 
+DEW: 2019, 
+BABBAGE: 2019, 
+BLOWRIVER: 2019, 
+SHEEPCREEK: 2019, 
+SPRINGRIVER: 2019, 
+AUFEIS: 2019, 
+BUCKLANDHILLS: 2019, 
+SWEDE: 2019, 
+COALCREEK: 2019, 
+KINGSOLOMON: 2019, 
+BIGHILL: 2019, 
+BUTLER: 2019, 
+THISTLE: 2019, 
+EXCELSIOR: 2019, 
+BROWNSCREEK: 2019, 
+SOUTHSTONEBOY: 2019, 
+PINNELL: 2019, 
+PEDRO: 2019, 
+SEELA: 2019, 
+WHEATEAR: 2019, 
+OBRIAN: 2019, 
+FOSSILCREEK: 2019
+});
+
+exports.epsg102001 = 
+  'PROJCS["Canada_Albers_Equal_Area_Conic", ' + 
+    'GEOGCS["NAD83", ' + 
+      'DATUM["North_American_Datum_1983", ' + 
+        'SPHEROID["GRS 1980", 6378137.0, 298.2572221010042, AUTHORITY["EPSG","7019"]], ' + 
+        'TOWGS84[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], ' + 
+        'AUTHORITY["EPSG","6269"]], ' + 
+      'PRIMEM["Greenwich", 0.0], ' + 
+      'UNIT["degree", 0.017453292519943295], ' + 
+      'AXIS["Longitude", EAST], ' + 
+      'AXIS["Latitude", NORTH], ' + 
+      'AUTHORITY["EPSG","4269"]], ' + 
+    'PROJECTION["Albers_Conic_Equal_Area"], ' + 
+    'PARAMETER["central_meridian", -96.0], ' + 
+    'PARAMETER["latitude_of_origin", 40.0], ' + 
+    'PARAMETER["standard_parallel_1", 50.0], ' + 
+    'PARAMETER["false_easting", 0.0], ' + 
+    'PARAMETER["false_northing", 0.0], ' + 
+    'PARAMETER["standard_parallel_2", 70.0], ' + 
+    'UNIT["m", 1.0], ' + 
+    'AXIS["x", EAST], ' + 
+    'AXIS["y", NORTH]]';
+
+// CRS transform: a post transform for a crs, defined as a list of affine transformation parameters in row-major order [xScale, xShearing, xTranslation, yShearing, yScale, yTranslation]
+// https://developers.google.com/earth-engine/glossary
+// https://docs.oracle.com/javase/8/docs/api/java/awt/geom/AffineTransform.html
+exports.epsg102001_30m = [30,0,0,0,-30,20];
+exports.epsg102001_3m = [3,0,0,0,-3,20];
+exports.epsg102001_1m = [1,0,0,0,-1,20];
+exports.epsg102001_25cm = [0.25,0,0,0,-0.25,20];

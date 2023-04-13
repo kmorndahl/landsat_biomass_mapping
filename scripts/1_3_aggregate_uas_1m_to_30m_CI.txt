@@ -1,0 +1,122 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE SCRIPT TO AGGREGATE 1 M UAV BIOMASS MAPS TO 30 M RESOLUTION - CONFIDENCE INTERVALS //
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'biomass_ci_total_1m'
+// DUE TO MEMORY ISSUES IN GEE, IT IS BETTER TO RUN SCRIPTS SEPARATELY AS DECRIBED ABOVE RATHER THAN .MAP OVER PFTs
+
+// =================== IMPORTS ===================
+
+var biomass_ci_deciduous_shrubs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_deciduous_shrubs_1m"),
+    biomass_ci_evergreen_shrubs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_evergreen_shrubs_1m"),
+    biomass_ci_forbs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_forbs_1m"),
+    biomass_ci_graminoids_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_graminoids_1m"),
+    biomass_ci_lichens_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_lichens_1m"),
+    biomass_ci_total_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_total_1m");
+
+// =================== SET UP ===================
+
+// Import functions ===================
+var fxns = require('users/kmo265/functions:functions');
+var palettes = require('users/gena/packages:palettes');
+
+// FUNCTION: reduceResolution30m
+// USE: Reduce an image to a particular resolution and add bands for 1) sum of biomass for each larger pixel, 2) count of valid pixels used to calculate each larger pixel, 3) percentage of valid pixels used to calculate each larger pixel
+// PARAMETERS: 
+// crs = crs for output images
+// crs_transform = crs transform for output images
+
+var reduceResolution30m_CI = function(crs, crs_transform){
+  
+  var wrapper = function(image){
+    
+    // SUM -----
+      
+    var sum = image.select('BIOMASS_CI_g_adjusted')
+      // Reduce resolution by summing cells
+      .reduceResolution({
+        reducer: ee.Reducer.sum().unweighted(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: crs,
+        crsTransform: crs_transform
+      })
+      .rename(['BIOMASS_CI_g']);
+  
+    // PERCENT -----
+  
+    var percent = sum.mask().rename('PIXEL_PERCENT'); // Mask of the reduceResolution output denotes what percentage of a larger pixel is covered by smaller pixels
+
+    // COMBINE -----
+  
+    return sum.addBands(percent);
+  
+  };
+  
+  return wrapper;
+  
+};
+
+// FUNCTION: adjustBiomassSums
+// USE: Adjusts biomass sums to account for proportion of valid small pixels used to calculate larger pixel sum
+// NOTES:
+// Assume the missing part of the pixel had the same biomass as the observed part -- this way estimates may be wrong but are not biased
+// e.g. if the sum of biomass was 100 kg and you only observed 50% of the pixel, estimated biomass for that pixel would be 200 kg 
+var adjustBiomassSums_CI = function(image){
+  
+  var biomass = image.select('BIOMASS_CI_g');
+  var percent = image.select('PIXEL_PERCENT');
+  var biomass_adjusted = biomass.divide(percent).rename('BIOMASS_CI_g_adjusted');
+
+  return image.addBands(biomass_adjusted);
+
+};
+
+// Look at initial collection ===================
+print('Initial collection, 1m', biomass_ci_total_1m);
+
+// OPTIONAL: Filter based on pixel percentage ===================
+biomass_ci_total_1m = biomass_ci_total_1m.map(fxns.maskByPixelPercent(0.75));
+
+// Get only biomass bands ===================
+biomass_ci_total_1m = biomass_ci_total_1m.select('BIOMASS_CI_g_adjusted');
+
+// =================== AGGREGATE ===================
+
+// Aggregate and calculate biomass sums, count of input pixels, percent of input pixels ===================
+var biomass_30m = biomass_ci_total_1m.map(reduceResolution30m_CI(fxns.epsg102001, fxns.epsg102001_30m));
+
+// Adjust partial pixel biomass values  ===================
+biomass_30m = biomass_30m.map(adjustBiomassSums_CI);
+print('Aggregated to 30m', biomass_30m);
+
+// Do not need to adjust cover values because they are calculated via average ===================
+
+// OPTIONAL: Filter based on pixel percentage ===================
+biomass_30m = biomass_30m.map(fxns.maskByPixelPercent(0.75));
+
+// Get pixel centroids  ===================
+var pts = ee.FeatureCollection(biomass_30m.map(fxns.getPixelCentroids)).flatten();
+print('Pixel centroid points', pts);
+
+// =================== EXPORT ===================
+
+// Export unfiltered centroid points to drive ===================
+// Export.table.toDrive({
+//   collection: pts,
+//   description: 'UAV_to_30m_pixel_centroids_unfiltered_deciduous_shrubs',
+//   folder: 'EarthEngine',
+//   fileFormat: 'CSV'
+// });
+
+// Export filtered centroid points to drive ===================
+Export.table.toDrive({
+  collection: pts,
+  description: 'UAV_to_30m_pixel_centroids_1m75_30m75_total_CIs',
+  folder: 'EarthEngine',
+  fileFormat: 'CSV'
+});
+
+throw('stop');

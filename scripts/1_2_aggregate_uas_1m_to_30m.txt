@@ -1,0 +1,70 @@
+/////////////////////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE SCRIPT TO AGGREGATE 1 M UAV BIOMASS MAPS TO 30 M RESOLUTION //
+/////////////////////////////////////////////////////////////////////////////////////
+
+// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'biomass_deciduous_shrubs_1m'
+// DUE TO MEMORY ISSUES IN GEE, IT IS BETTER TO RUN SCRIPTS SEPARATELY AS DECRIBED ABOVE RATHER THAN .MAP OVER PFTs
+
+// =================== IMPORTS ===================
+
+var biomass_deciduous_shrubs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_deciduous_shrubs_1m"),
+    biomass_evergreen_shrubs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_evergreen_shrubs_1m"),
+    biomass_forbs_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_forbs_1m"),
+    biomass_graminoids_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_graminoids_1m"),
+    biomass_lichens_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_lichens_1m"),
+    biomass_total_1m = ee.ImageCollection("*/UAV_biomass_1m_UPDATE/UAV_biomass_total_1m");
+
+// =================== SET UP ===================
+
+// Import functions ===================
+var fxns = require('users/kmo265/functions:functions');
+var palettes = require('users/gena/packages:palettes');
+
+// Look at initial collection ===================
+print(biomass_deciduous_shrubs_1m);
+
+// OPTIONAL: Filter based on pixel percentage ===================
+biomass_deciduous_shrubs_1m = biomass_deciduous_shrubs_1m.map(fxns.maskByPixelPercent(0.75));
+
+// Get only biomass bands ===================
+biomass_deciduous_shrubs_1m = biomass_deciduous_shrubs_1m.select('BIOMASS_g_adjusted', 'PERCENT_COVER');
+print(biomass_deciduous_shrubs_1m);
+
+// =================== AGGREGATE ===================
+
+// Aggregate and calculate biomass sums, count of input pixels, percent of input pixels ===================
+var biomass_30m = biomass_deciduous_shrubs_1m.map(fxns.reduceResolution30m(fxns.epsg102001, fxns.epsg102001_30m));
+print(biomass_30m);
+
+// Adjust partial pixel biomass values  ===================
+biomass_30m = biomass_30m.map(fxns.adjustBiomassSums);
+print(biomass_30m);
+
+// Do not need to adjust cover values because they are calculated via average ===================
+
+// OPTIONAL: Filter based on pixel percentage ===================
+biomass_30m = biomass_30m.map(fxns.maskByPixelPercent(0.75));
+
+// Get pixel centroids  ===================
+var pts = ee.FeatureCollection(biomass_30m.map(fxns.getPixelCentroids)).flatten();
+print(pts);
+
+// =================== EXPORT ===================
+
+// Export unfiltered centroid points to drive ===================
+// Export.table.toDrive({
+//   collection: pts,
+//   description: 'UAV_to_30m_pixel_centroids_unfiltered_deciduous_shrubs',
+//   folder: 'EarthEngine',
+//   fileFormat: 'CSV'
+// });
+
+// Export filtered centroid points to drive ===================
+Export.table.toDrive({
+  collection: pts,
+  description: 'UAV_to_30m_pixel_centroids_1m75_30m75_deciduous_shrubs',
+  folder: 'EarthEngine',
+  fileFormat: 'CSV'
+});
+
+throw('stop');

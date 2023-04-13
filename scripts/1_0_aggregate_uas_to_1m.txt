@@ -1,0 +1,86 @@
+////////////////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE SCRIPT TO AGGREGATE UAV BIOMASS MAPS TO 1 M RESOLUTION //
+////////////////////////////////////////////////////////////////////////////////
+
+// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'cover_deciduous_shrubs' AND 'biomass_deciduous_shrubs'
+// DUE TO MEMORY ISSUES IN GEE, IT IS BETTER TO RUN SCRIPTS SEPARATELY AS DECRIBED ABOVE RATHER THAN .MAP OVER PFTs
+
+// =================== IMPORTS ===================
+
+var extent_polys = ee.FeatureCollection("*/UAV_supplementary_data/extent_polys_WGS84_UPDATE"),
+    biomass_deciduous_shrubs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_deciduous_shrubs_zeros"),
+    biomass_evergreen_shrubs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_evergreen_shrubs_zeros"),
+    biomass_forbs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_forbs_zeros"),
+    biomass_graminoids = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_graminoids_zeros"),
+    biomass_lichens = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_lichens_zeros"),
+    biomass_total = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_total_zeros"),
+    cover_deciduous_shrubs = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_deciduous_shrubs_NAs"),
+    cover_evergreen_shrubs = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_evergreen_shrubs_NAs"),
+    cover_forbs = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_forbs_NAs"),
+    cover_graminoids = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_graminoids_NAs"),
+    cover_lichens = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_lichens_NAs"),
+    cover_total = ee.ImageCollection("*/UAV_biomass_NAs_UPDATE/UAV_biomass_total_NAs");
+
+// =================== SET UP ===================
+
+// Import functions ===================
+var fxns = require('users/kmo265/functions:functions');
+var palettes = require('users/gena/packages:palettes'); 
+
+// Look at initial collections ===================
+print('Biomass original resolution:', biomass_deciduous_shrubs);
+print('Cover original resolution:', cover_deciduous_shrubs);
+
+// Tidy up datasets ===================
+cover_deciduous_shrubs = cover_deciduous_shrubs.map(function(image){return image.multiply(0).add(1)}); // Convert cover image collection to all ones and masked
+biomass_deciduous_shrubs = biomass_deciduous_shrubs.map(function(image){return image.rename('BIOMASS')}); // Rename biomass band
+cover_deciduous_shrubs = cover_deciduous_shrubs.map(function(image){return image.rename('COVER')}); // Rename cover band
+
+// Add additional ID field ===================
+biomass_deciduous_shrubs = biomass_deciduous_shrubs.map(function(image){return image.set('ID', image.get('system:index'))}); // Rename biomass band
+cover_deciduous_shrubs = cover_deciduous_shrubs.map(function(image){return image.set('ID', image.get('system:index'))}); // Rename cover band
+
+// =================== JOIN COLLECTIONS ===================
+
+// Create filter denoting which field to match between collections ===================
+var filter = ee.Filter.equals({
+  leftField: 'ID',
+  rightField: 'ID'
+});
+
+// Create inner join ===================
+var innerJoin = ee.Join.inner(); 
+
+// Apply inner join ===================
+biomass_deciduous_shrubs = ee.ImageCollection(innerJoin.apply(biomass_deciduous_shrubs, cover_deciduous_shrubs, filter)); 
+
+// Combine into multiband images ===================
+biomass_deciduous_shrubs = biomass_deciduous_shrubs.map(function(image) {
+  return ee.Image.cat(image.get('primary'), image.get('secondary'));
+});
+
+// =================== FINISH SETTING UP ===================
+
+// Clip biomass rasters ===================
+var biomass_clipped = biomass_deciduous_shrubs.map(fxns.clipImageCollection(extent_polys));
+
+// Add sample year field ===================
+var biomass_year = biomass_clipped.map(fxns.setYearProperty(fxns.sampleYearDictionary));
+
+print('Final original resolution:', biomass_year);
+
+// =================== AGGREGATE ===================
+
+// Aggregate and calculate biomass sums, count of input pixels, percent of input pixels ===================
+var biomass_1m = biomass_year.map(fxns.reduceResolution1m(1));
+
+// Adjust partial pixel biomass values  ===================
+biomass_1m = biomass_1m.map(fxns.adjustBiomassSums);
+
+print('Aggregated at 1m resolution:', biomass_1m);
+
+// =================== EXPORT ===================
+
+// Export to asset ===================
+fxns.exportImageCollectionToAssetVariableCRS(biomass_1m, '_1m', '*/UAV_biomass_1m_UPDATE/UAV_biomass_deciduous_shrubs_1m/', 1);
+

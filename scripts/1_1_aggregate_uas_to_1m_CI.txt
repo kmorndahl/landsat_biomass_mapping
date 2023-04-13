@@ -1,0 +1,100 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE SCRIPT TO AGGREGATE UAV BIOMASS MAPS TO 1 M RESOLUTION - CONFIDENCE INTERVALS //
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'biomass_ci_total' 
+// DUE TO MEMORY ISSUES IN GEE, IT IS BETTER TO RUN SCRIPTS SEPARATELY AS DECRIBED ABOVE RATHER THAN .MAP OVER PFTs
+
+// =================== IMPORTS ===================
+
+var biomass_ci_deciduous_shrubs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_deciduous_shrubs_zeros"),
+    biomass_ci_evergreen_shrubs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_evergreen_shrubs_zeros"),
+    biomass_ci_forbs = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_forbs_zeros"),
+    biomass_ci_graminoids = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_graminoids_zeros"),
+    biomass_ci_lichens = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_lichens_zeros"),
+    biomass_ci_total = ee.ImageCollection("*/UAV_biomass_zeros_UPDATE/UAV_biomass_ci_total_zeros"),
+    extent_polys = ee.FeatureCollection("*/UAV_supplementary_data/extent_polys_WGS84_UPDATE");
+
+// =================== SET UP ===================
+
+// Import functions ===================
+var fxns = require('users/kmo265/functions:functions');
+var palettes = require('users/gena/packages:palettes'); 
+
+// FUNCTION: reduceResolution1m
+// USE: Reduce an image to a particular resolution and add bands for 1) sum of biomass for each larger pixel, 2) count of valid pixels used to calculate each larger pixel, 3) percentage of valid pixels used to calculate each larger pixel
+// PARAMETERS: 
+// scale = resolution to aggregate to
+
+var reduceResolution1m_ci = function(scale){
+  
+  var wrapper = function(image){
+    
+    var proj = image.select('BIOMASS').projection();
+    
+    // SUM -----
+      
+    var sum = image.select('BIOMASS')
+      // Reduce resolution by summing cells
+      .reduceResolution({
+        reducer: ee.Reducer.sum().unweighted(),
+        maxPixels: 65536
+      })
+      // Request the data at the desired resolution
+      .reproject({
+        crs: proj,
+        scale: scale
+      })
+      .rename(['BIOMASS_g']);
+  
+    // PERCENT -----
+  
+    var percent = sum.mask().rename('PIXEL_PERCENT'); // Mask of the reduceResolution output denotes what percentage of a larger pixel is covered by smaller pixels
+
+    // COMBINE -----
+  
+    return sum.addBands(percent);
+  
+  };
+  
+  return wrapper;
+  
+};
+
+// Look at initial collections ===================
+print('Biomass CI original resolution:', biomass_ci_total);
+
+// Tidy up datasets ===================
+biomass_ci_total = biomass_ci_total.map(function(image){return image.rename('BIOMASS')}); // Rename biomass band
+
+// Add additional ID field ===================
+biomass_ci_total = biomass_ci_total.map(function(image){return image.set('ID', image.get('system:index'))}); // Rename biomass band
+
+// =================== FINISH SETTING UP ===================
+
+// Clip biomass rasters ===================
+var biomass_clipped = biomass_ci_total.map(fxns.clipImageCollection(extent_polys));
+
+// Add sample year field ===================
+var biomass_year = biomass_clipped.map(fxns.setYearProperty(fxns.sampleYearDictionary));
+
+print('Final original resolution:', biomass_year);
+
+// =================== AGGREGATE ===================
+
+// Aggregate and calculate biomass sums, count of input pixels, percent of input pixels ===================
+var biomass_1m = biomass_year.map(reduceResolution1m_ci(1));
+
+// Adjust partial pixel biomass values  ===================
+biomass_1m = biomass_1m.map(fxns.adjustBiomassSums);
+
+// Rename
+biomass_1m = biomass_1m.map(function(img){return img.rename(['BIOMASS_CI_g', 'PIXEL_PERCENT', 'BIOMASS_CI_g_adjusted'])});
+
+print('Aggregated at 1m resolution:', biomass_1m);
+
+// =================== EXPORT ===================
+
+// Export to asset ===================
+fxns.exportImageCollectionToAssetVariableCRS(biomass_1m, '_1m', '*/UAV_biomass_1m_UPDATE/UAV_biomass_ci_total_1m/', 1);
+

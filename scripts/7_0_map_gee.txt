@@ -1,0 +1,867 @@
+/////////////////////////////////////////////////////////////////////
+// GOOGLE EARTH ENGINE SCRIPT TO MAP PFT BIOMASS ACROSS STUDY AREA //
+/////////////////////////////////////////////////////////////////////
+
+// REPLACE 'coef' FEATURE COLLECTION TO RUN FOR A DIFFERENT DATA TYPE (FIELD VS. UAV) AND TRANSFORM (LOG VS SQRT) COMBINATION
+
+// =================== IMPORTS ===================
+
+var porcupine = ee.FeatureCollection("*/AOIs/porcupine_total"),
+    fortymile = ee.FeatureCollection("*/AOIs/studyarea_fortymile_caribou_herd_extended_range"),
+    predictors_range = ee.FeatureCollection("*/UAV_to_LS/predictors_range"),
+    coef = ee.FeatureCollection("*/UAV_to_LS/glmmLasso_coefficients_final_UAV_sqrt_nrmse_nmbe_corr_avg_MC_all");
+
+// ====================
+// 1. SET UP ==========
+// ====================
+
+// 1.1 SET TRANSFORM (log or sqrt) ==========
+
+var transform = 'log'; // Choose log or sqrt
+
+print('The transform is: ', transform);
+
+// 1.2 DEFINE STUDY AREA ==========
+
+var AOI = porcupine.merge(fortymile).union();
+
+// 1.3 LOAD ACCESSORY SCRIPTS ==========
+
+var palettes = require('users/gena/packages:palettes');
+
+var fxns = require('*/functions:functions');
+
+// https://github.com/fitoprincipe/geetools-code-editor/wiki
+var batch = require('users/fitoprincipe/geetools:batch');
+
+var temporalSegmentation = require('users/wiell/temporalSegmentation:temporalSegmentation'); // Load temporal segmentation module
+
+// 1.4 MACANDER FUNCTIONS ==========
+
+exports.getSeasonalPredictorsCcdc = function(year, segments, extrapolateMaxDays) {
+  var snowDoysCcdcNdsi = ee.Image('projects/foreststructure/ABoVE/CCDC/CCDC_ABoVE_L4578SR_1984_2020_NDSI_SnowDoys_v20201116_forCCDC');
+  var lastSnowDoy_NDSI_p1 = snowDoysCcdcNdsi.select(['lastSnowDoy_NDSI_p1']);
+  var lastSnowDoy_NDSI_p4 = snowDoysCcdcNdsi.select(['lastSnowDoy_NDSI_p4']);
+  var firstSnowDoy_NDSI_p1 = snowDoysCcdcNdsi.select(['firstSnowDoy_NDSI_p1']);
+  var firstSnowDoy_NDSI_p4 = snowDoysCcdcNdsi.select(['firstSnowDoy_NDSI_p4']);
+  
+  var lastSnowDoy = lastSnowDoy_NDSI_p1.rename('phenology_lastSnowDoy'),
+   firstSnowDoy = firstSnowDoy_NDSI_p1.rename('phenology_firstSnowDoy'),
+   snowFreeLength = firstSnowDoy.subtract(lastSnowDoy).rename('phenology_snowFreeDays');
+  var phenologyMetrics = lastSnowDoy.addBands(firstSnowDoy).addBands(snowFreeLength);
+
+  var nBreaks = segments.toImage().select('tBreak').arrayLength(0).rename('landsatCcdcMeta_nBreaks');
+  var previousSegment = segments.findByDate(ee.Date.fromYMD(year,7,31), 'previous');
+  var segmentMetadataPrevious = previousSegment.toImage()
+    .select('tStart', 'tEnd', 'tBreak', 'numObs', 'changeProb')
+    .regexpRename('^', 'landsatCcdcMeta_previousSegment_');
+  var nextSegment = segments.findByDate(ee.Date.fromYMD(year,7,31), 'next'); //was 'closest' before 2021-01-11 but this would tend to delay disturbance detection by a year
+  var segmentMetadataNext = nextSegment.toImage()
+    .select('tStart', 'tEnd', 'tBreak', 'numObs', 'changeProb')
+    .regexpRename('^', 'landsatCcdcMeta_nextSegment_');
+  var ccdcMetadata = segmentMetadataPrevious
+    .addBands(segmentMetadataNext)
+    .addBands(nBreaks);
+
+  var seasonalLandsat_p05 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4, 5,  'p005', extrapolateMaxDays, false);
+  var seasonalLandsat_p20 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,20,  'p020', extrapolateMaxDays, false);
+  var seasonalLandsat_p35 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,35,  'p035', extrapolateMaxDays, false);
+  var seasonalLandsat_p50 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,50,  'p050', extrapolateMaxDays, false);
+  var seasonalLandsat_p65 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,65,  'p065', extrapolateMaxDays, false);
+  var seasonalLandsat_p80 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,80,  'p080', extrapolateMaxDays, false);
+  var seasonalLandsat_p95 = exports.fitSeasonalPercentile(year,nextSegment,lastSnowDoy_NDSI_p1,firstSnowDoy_NDSI_p4,95,  'p095', extrapolateMaxDays, false);
+    
+  var spectralFeatures = seasonalLandsat_p05
+    .addBands(seasonalLandsat_p20)
+    .addBands(seasonalLandsat_p35)
+    .addBands(seasonalLandsat_p50)
+    .addBands(seasonalLandsat_p65)
+    .addBands(seasonalLandsat_p80)
+    .addBands(seasonalLandsat_p95);
+  
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'blue');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'green');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'red');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'nir');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'swir1');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'swir2');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'btemp');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'ndvi');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'evi');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'nbr');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'ndmi');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'ndsi');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'ndwi');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'tcb');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'tcg');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'tcw');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'tcwgd');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'bluecc');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'greencc');
+  spectralFeatures = exports.spectralFeatureRatesAndSummaries(spectralFeatures, 'redcc');
+  spectralFeatures = spectralFeatures.select('[^d][^o][^y].*');
+  return(spectralFeatures)
+    .regexpRename('^', 'landsatCcdc_')
+    .addBands(phenologyMetrics)
+    .addBands(ccdcMetadata);
+};
+
+exports.fitSeasonalPercentile = function(year, segment, startRaster, endRaster, seasonalPercentile, percentileLabel, extrapolateMaxDays) {
+  var seasonLength = endRaster.subtract(startRaster);
+  var targetDOY = startRaster.add(seasonLength.multiply(ee.Number(seasonalPercentile).divide(100)));
+  // var t = ee.Image.constant(year).multiply(365.25).add(targetDOY);
+  var t = ee.Image.constant(year).add(targetDOY.divide(365.25));
+  // var segment = segments.findByDate(ee.Date.fromYMD(year,7,31), 'closest'); //was 'closest' before 2021-01-11 but this would tend to delay disturbance detection by a year
+  var fit = segment.slice({t: t, harmonics: 3, extrapolateMaxDays: extrapolateMaxDays});//.fit({t: t, harmonics: 3, extrapolateMaxDays: extrapolateMaxDays});
+  var reflectanceConstraint = ee.Image([1,1,1,1,1,1,0,-10000]); //reflectance ranges 0-10000 but 0 values cause division by zero glitches
+  fit = fit.max(reflectanceConstraint);
+  var spectralFeatures = exports.spectralFeaturesFromLandsat(fit);
+  var suffix = '_seasonal';//_' + percentileLabel;
+  spectralFeatures = spectralFeatures
+    .addBands(targetDOY.rename('doy'))
+    .regexpRename('$', suffix);
+  return(spectralFeatures
+    .regexpRename('$', percentileLabel));
+};
+
+exports.spectralFeaturesFromLandsat = function(landsat_modeled) {
+  // var temporalSegmentation = require('users/wiell/temporalSegmentation:temporalSegmentation'); // Load module
+  var landsat_reflectance_unscaled = landsat_modeled
+    .select(['blue','green','red','nir','swir1','swir2'])
+    .divide(10000);
+    
+  var evi = landsat_reflectance_unscaled.expression(
+      '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+        'NIR': landsat_reflectance_unscaled.select('nir'),
+        'RED': landsat_reflectance_unscaled.select('red'),
+        'BLUE': landsat_reflectance_unscaled.select('blue')
+      })
+    .multiply(10000).clamp(-10000,10000)
+    .rename('evi');
+  // Map.addLayer(evi, {min:0, max:8000}, 'evi', false);
+  
+  var nbr = landsat_modeled.normalizedDifference(['nir','swir2']).multiply(10000).clamp(-10000,10000).rename('nbr'),
+      ndwi = landsat_modeled.normalizedDifference(['green', 'nir']).multiply(10000).clamp(-10000,10000).rename('ndwi'),
+      ndmi = landsat_modeled.normalizedDifference(['nir', 'swir1']).multiply(10000).clamp(-10000,10000).rename('ndmi'),
+      ndsi = landsat_modeled.normalizedDifference(['green', 'swir1']).multiply(10000).clamp(-10000,10000).rename('ndsi');
+      // ndviFromSR = landsat_modeled.normalizedDifference(['nir', 'red']).multiply(10000).clamp(-10000,10000).rename('ndviFromSR');
+  //Tasseled Cap
+  // Define an Array of Tasseled Cap coefficients. Crist(1985)
+  var coefficients = ee.Array([
+   [ 0.2043,  0.4158,  0.5524,  0.5741,   0.3124,  0.2303],
+   [-0.1603, -0.2819,	-0.4934,	0.7940,  -0.0002,	-0.1446],
+   [ 0.0315,  0.2021,  0.3102,  0.1594,  -0.6806, -0.6109]
+  ]);
+  var arrayImage1D = landsat_reflectance_unscaled.toArray();
+  var arrayImage2D = arrayImage1D.toArray(1);
+  var tasseled_cap = ee.Image(coefficients)
+    .matrixMultiply(arrayImage2D)
+    // Get rid of the extra dimensions.
+    .arrayProject([0])
+    .arrayFlatten(
+      [['tcb', 'tcg', 'tcw']])
+    .multiply(10000).clamp(-10000,10000);//, 'fourth', 'fifth', 'sixth']]);
+  // Map.addLayer(tasseled_cap, {min: -1000, max: [5000, 1000, 1000]}, 'tasseled_cap', false);
+  
+  var tcwgd = tasseled_cap.select('tcw').subtract(tasseled_cap.select('tcg')).rename('tcwgd');
+  
+  var sum_bgr = landsat_modeled.select('blue','green','red').reduce(ee.Reducer.sum());
+  var redcc = landsat_modeled.select('red').divide(sum_bgr).multiply(10000).clamp(-10000,10000).rename('redcc');
+  var greencc = landsat_modeled.select('green').divide(sum_bgr).multiply(10000).clamp(-10000,10000).rename('greencc');
+  var bluecc = landsat_modeled.select('blue').divide(sum_bgr).multiply(10000).clamp(-10000,10000).rename('bluecc');
+  
+  return landsat_modeled
+    .addBands(evi)
+    .addBands(nbr)
+    .addBands(ndmi)
+    .addBands(ndwi)
+    .addBands(ndsi)
+    // .addBands(ndviFromSR)
+    .addBands(tasseled_cap)
+    .addBands(tcwgd)
+    .addBands(redcc)
+    .addBands(greencc)
+    .addBands(bluecc);
+};
+
+exports.spectralFeatureRatesAndSummaries = function(spectralFeatures, spectralFeature) {
+  var regex = spectralFeature + '_.*';
+  var oneFeature = spectralFeatures.select(regex);
+  var doyFeature = spectralFeatures.select('doy_.*');
+  var oneFeature_minMax  = oneFeature.reduce(ee.Reducer.minMax());
+  var changeRates = exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p005', 'p020')
+    .addBands(exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p020', 'p035'))
+    .addBands(exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p035', 'p050'))
+    .addBands(exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p050', 'p065'))
+    .addBands(exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p065', 'p080'))
+    .addBands(exports.changeRateOneFeature(oneFeature, spectralFeature, doyFeature, 'p080', 'p095'));
+    
+  var summarizedFeature = oneFeature.reduce(ee.Reducer.mean()).rename(spectralFeature + '_mean')
+    .addBands(oneFeature.reduce(ee.Reducer.median()).rename(spectralFeature + '_median'))
+    .addBands(oneFeature_minMax.select('max').subtract(oneFeature_minMax.select('min'))
+      .rename(spectralFeature + '_amplitude'))
+    .addBands(changeRates);
+  return spectralFeatures.addBands(summarizedFeature);
+};
+
+exports.changeRateOneFeature = function(oneFeature, spectralFeatureName, doyFeature, startP, endP) {
+  var doyDiff = doyFeature.select('doy_seasonal' + endP)
+    .subtract(doyFeature.select('doy_seasonal' + startP));
+  var featureDiff = oneFeature.select(spectralFeatureName + '_seasonal' + endP)
+    .subtract(oneFeature.select(spectralFeatureName + '_seasonal' + startP));
+  return featureDiff.divide(doyDiff).rename(spectralFeatureName + '_changeRate' + startP + endP);
+};
+
+exports.getConstantPredictors = function() {
+var topoMetrics =
+  ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/roughness")
+    .addBands(ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/siteExposure_100"))
+    .addBands(ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/surfaceAreaRatio"))
+    .addBands(ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/surfaceReliefRatio_10k"))
+    .addBands(ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/topographicRadiation_10k"))
+    .addBands(ee.Image("projects/foreststructure/DEM/AK_ABoVE_SWCAN_30m_201001_20200928_Metrics/twi_100"))
+    .addBands(ee.Image("projects/foreststructure/DEM/IFSAR_CDEM_SRTM_GMTED_ABoVE_AK_SWCAN_30m_102001_20200928").select('elevation_m'))
+    .addBands(ee.Terrain.slope(ee.Image("projects/foreststructure/DEM/IFSAR_CDEM_SRTM_GMTED_ABoVE_AK_SWCAN_30m_102001_20200928").select('elevation_m')))
+    .regexpRename('^', 'topo_');
+
+// Climate
+var climateMetricsSimple = ee.Image('projects/foreststructure/ABoVE/BiomeShift/Predictors/terraClimate_selected_normals_1985_2020_filled_20km')
+      .regexpRename('^', 'climTerra_')
+      .resample('bilinear');
+
+// Permafrost Zonation Index (Gruber 2012)
+var permafrostMetrics = ee.Image('projects/foreststructure/misc/global_permafrost_zonation_index_gruber2012_filled_20km')
+  .resample('bilinear').rename('permafrost_zonation_index');
+
+// Water occurrence
+var waterOccurrence = ee.Image("JRC/GSW1_3/GlobalSurfaceWater").select('occurrence').unmask(0).rename('waterOccurrence');
+
+// Combine climate, permafrost, water
+var constantPredictors = topoMetrics.addBands(climateMetricsSimple).addBands(permafrostMetrics).addBands(waterOccurrence);
+return constantPredictors;
+};
+
+// Mask stack to snow-free only
+function maskPredictorStack(image) {
+    var phenology_snowFreeDays_gt1 = image.select('phenology_snowFreeDays').gt(1);
+    var ccdcSegmentGte20 = image.select('landsatCcdcMeta_nextSegment_numObs').gte(20);
+    return image.updateMask(phenology_snowFreeDays_gt1).updateMask(ccdcSegmentGte20);
+  }
+
+// Select a particular year from stack of PFT maps across several years
+function getPftYearStack(pftMaps, year) {
+  var pftYearColl = pftMaps.filter(ee.Filter.calendarRange(year, null, 'year')).select('cover');
+  
+  return pftYearColl.filterMetadata('response','equals','cTree').first().rename('cTree_cover')
+    .addBands(pftYearColl.filterMetadata('response','equals','bTree').first().rename('bTree_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','allDecShrub').first().rename('allDecShrub_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','decshrabs').first().rename('decshrabs_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','alnshr').first().rename('alnshr_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','betshr').first().rename('betshr_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','salshr').first().rename('salshr_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','allEvShrub').first().rename('allEvShrub_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','graminoid').first().rename('graminoid_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','allForb').first().rename('allForb_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','tmlichen_light2').first().rename('tmlichen_light2_cover'))
+    .addBands(pftYearColl.filterMetadata('response','equals','talshr').first().rename('talshr_cover'))
+    .clamp(0,100); //A few are outside nominal range
+    
+}
+
+// ================================
+// 2. PREDICTOR CREATION ==========
+// ================================
+
+// 2.1 CREATE LC PREDICTORS ==========
+
+// Bring in LC
+var above_lc = ee.Image('projects/foreststructure/ABoVE/ORNL_DAAC/ABoVE_LandCover_v01'),
+    above_lc_palette = [
+      "#003300", //01: Evergreen Forest
+      "#00dd00", //02: Deciduous Forest
+      "#008800", //03: Mixed Forest
+      "#79843b", //04: Woodland
+      "#694704", //05: Low Shrub
+      "#ad3714", //06: Tall Shrub
+      "#afa377", //07: Open Shrubs
+      "#eac856", //08: Herbaceous
+      "#a38d1e", //09: Tussock Tundra
+      "#dfe5a2", //10: Sparsely Vegetated
+      "#57da92", //11: Fen
+      "#d18523", //12: Bog
+      "#15bbe9", //13: Shallows/littoral
+      "#666666", //14: Barren
+      "#96b1d4"  //15: Water
+    ],
+    above_lc_viz = {min:1, max:15, palette: above_lc_palette};
+
+// 2.2 CREATE PFT PREDICTORS ==========
+
+// Get proper version of PFT maps
+var pftMaps = ee.ImageCollection("projects/foreststructure/ABoVE/BiomeShift/MosaicsFilled202109")
+  .filter(ee.Filter.inList('version', ['20210911_pft_noRatePreds','20210922_tallShrub_lidar_noRatePreds']));
+
+// Create PFT maps for a user designated sequence of years
+var pftMaps = ee.List.sequence(1985, 2020, 5).map(function(year) {
+  return pftMaps.filter(ee.Filter.calendarRange(year,null,'year')).toList(1000)});
+pftMaps = ee.ImageCollection(pftMaps.flatten());
+
+// 2.3 CREATE CCDC SEGMENTS ==========
+
+var segmentsImage = 
+  ee.ImageCollection('projects/foreststructure/ABoVE/CCDC/CCDC_ABoVE_L4578SR_1984_2020_J091_273_v20201203').mosaic(); // Load CCDC asset
+var segments = temporalSegmentation.Segments(segmentsImage,1); // Create temporal segments. 1=fractional year as time variable
+
+// 2.4 CREATE CCDC PREDICTORS ANNUAL TIME SERIES ==========
+
+// Map across list of years
+var ccdcPredictorTimeSeries = function(year){
+
+  var ccdc_predictors = exports.getSeasonalPredictorsCcdc(year, segments, 120); // Get seasonal CCDC predictors
+
+  ccdc_predictors = maskPredictorStack(ccdc_predictors); // Mask to include only pixels with at least one snow free observation
+
+  var spectral_mask = ccdc_predictors.select(['landsatCcdc_blue_seasonalp005']).mask(); // Get mask showing where spectral data is missing, first landsat band used as proxy
+  var year_img = ee.Image.constant(year).rename(['source_year']).toUint16().updateMask(spectral_mask); // Create constant image with year, cast to uint16, apply spectral mask
+  ccdc_predictors = year_img.addBands(ccdc_predictors);
+  
+  return ccdc_predictors.set('year', year);
+
+};
+
+// Define list of years
+var years_list = ee.List.sequence(1984, 2020, 1);
+
+// Map to create yearly CCDC predictor stacks
+var ccdc_predictor_time_series = ee.ImageCollection.fromImages(years_list.map(ccdcPredictorTimeSeries));
+
+print('CCDC predictors annual time series', ccdc_predictor_time_series);
+
+// ============================
+// 3. FILL CCDC GAPS ==========
+// ============================
+
+// 3.1 CREATE LATEST AVAILABLE DATA MOSAIC ==========
+
+// Stack time-series of CCDC predictor maps in ascending order and mosaic
+// This fills each pixel with the latest year that had data
+var dataLatestYearAvailable = ee.Image(ccdc_predictor_time_series.sort('year', true) // Sort by year, ascending
+  .mosaic() // Mosaic to fill with latest available data
+  .set('year', 2020)); // Set year to last year, 2020 -- this image represents 2020 data with gaps filled with the next available data (mostly from 2019)
+
+// 3.2 PREPARE PREDICTOR TIME SERIES FOR GAP FILLING ==========
+
+//Stack time-series of predictor maps in descending order, excluding the last year
+var ccdc_predictor_time_series_descending = ccdc_predictor_time_series.sort('year', false) // Sort descending
+  .filter(ee.Filter.neq('year', 2020)); // Remove last year, 2020, as these data are captured in the 'dataLatestYearAvailable' image
+
+// 3.3 DEFINE GAP FILLING FUNCTION ==========
+
+// Function to fill gaps in the data with the latest year that had data
+var fillAnnual = function(image, list) {
+  var previous = ee.Image(ee.List(list).get(-1)); // Get last image in accumulating list, this image will always have no gaps and is the image used for filling
+  var year = image.get('year'); // Get current image year
+  var filled = ee.ImageCollection([previous, image]).mosaic().set('year', year); // Fill current image using gap-free image, assign year property
+  return ee.List(list).add(filled); // Add filled image to the list, it will be used as the gap-free image in the next iteration
+};
+
+// 3.4 ITERATE AND FILL GAPS ==========
+
+// Iterate through images in descending order filling nodata with data from subsequent year
+// List starts with 'dataLatestYearAvailable' on the first iteration
+// After completion, sort ascending
+var ccdc_predictor_time_series_filled = ee.ImageCollection(ee.List(ccdc_predictor_time_series_descending.iterate(fillAnnual, ee.List([dataLatestYearAvailable])))).sort('year', true);
+
+// Report results
+print('Gap-filled CCDC predictors annual time series', ccdc_predictor_time_series_filled);
+
+// ====================================
+// 4. COMBINE ALL PREDICTORS ==========
+// ====================================
+// Creates time series for 5-year time series from 1985-2020 
+// Combines spectral (CCDC), 'constant' predictors (climate, phenology, topography), land cover and PFT cover
+// Adds intercept band (constant at 1)
+// Masks to snow-free season
+
+// Map across list of years
+var predictorStackTimeSeries = function(year){
+  
+  // 4.1 LAND COVER ==========
+  
+  // Get latest LC
+  var lc_year = ee.Algorithms.If(ee.Number(year).gt(2014), 2014, year); // Land cover only goes until 2014, if current year is later than that, default to the latest available year, 2014
+  var prefix = ee.String('y');
+  var lc_year_str = prefix.cat(ee.Number(lc_year).format('%.0f'));
+  var lc = ee.Image(above_lc.select([lc_year_str]));
+
+  // Get LC information
+  var LCs = ee.List.sequence(1, 15, 1);
+  var LC_names = ['LC1', 'LC2', 'LC3', 'LC4', 'LC5', 'LC6', 'LC7', 'LC8', 'LC9', 'LC10', 'LC11', 'LC12', 'LC13', 'LC14', 'LC15'];
+  
+  // One hot encode LC
+  var oneHotEncode = function(value){
+    var LC = ee.Image.constant(value);
+    return lc.eq(LC);
+  };
+  var lc_binary = LCs.map(oneHotEncode);
+  
+  // Convert list of images to multiband image and rename bands
+  lc_binary = ee.ImageCollection.fromImages(lc_binary).toBands().rename(LC_names);
+
+  // 4.2 CLIMATE/SPECTRAL/PHENOLOGY/TOPOGRAPHIC ==========
+
+  var predictors = ccdc_predictor_time_series_filled.filter(ee.Filter.eq('year', year)) // Get correct image from gap-filled CCDC predictors
+    .first() // Grab first to get image instead of image collection (should only be one image)
+    .addBands(exports.getConstantPredictors()); // Add constant predictors
+    
+  // 4.3 PFT ==========
+  
+  var pft = getPftYearStack(pftMaps, year); // Get PFT map for current year
+  
+  // 4.4 COMBINE ==========
+  
+  var final = predictors.addBands(lc_binary).addBands(pft);
+
+  // 4.5 ADD INTERCEPT ==========
+
+  var intercept = ee.Image.constant(1).rename(['intercept']);
+  final = intercept.addBands(final);
+
+  // 4.6 RETURN ==========
+  
+  return final.set('year', year);
+
+};
+
+// 4.7 MAP OVER YEARS LIST ==========
+
+// Define list of years
+var years_list = ee.List.sequence(1985, 2020, 5);
+
+// Map to create yearly predictor stacks
+var predictor_time_series = ee.ImageCollection.fromImages(years_list.map(predictorStackTimeSeries));
+print(predictor_time_series);
+
+// 4.8 CLIP ==========
+
+// Clip to AOI
+predictor_time_series = predictor_time_series.map(function(img){return img.clip(AOI)});
+
+print('Final predictors time series', predictor_time_series);
+
+// ================================================
+// 5. EXTRACT MODEL PREDICTORS AND CLAMP ==========
+// ================================================
+
+// Tidy coefficient data
+coef = coef.map(fxns.tidy_predictors_PFTs);
+
+// Get all predictors used in models
+var model_predictors = coef.aggregate_array('predictor').filter(ee.Filter.neq('item', 'intercept')).distinct(); // Exclude intercept, remove duplicates
+
+// Exclude LC
+var LC_predictors = model_predictors.filter(ee.Filter.stringStartsWith('item', 'LC')); // Save LC predictors, will need to add them back to images later
+model_predictors = model_predictors.filter(ee.Filter.stringStartsWith('item', 'LC').not()); // Exclude LC predictors, they are not included in 'predictors_range' and are binary so no need to clamp
+
+print('Model predictors', model_predictors);
+
+// Get additional bands used for masking
+var cover_predictors = predictor_time_series.first().bandNames();
+cover_predictors = cover_predictors.filter(ee.Filter.stringContains('item', '_cover')); // Save cover predictors, will need to add them back to images later
+
+// Set amount to buffer by (0 = no buffer, use actual min/max)
+var buffer_percent = 0.1;
+
+// Function to clamp each predictor used in modeling to the min/max range from our training data
+// Map over image collection where each image is a year in the time series
+var clampPredictors = function(img){
+  
+  // Map over the list of predictors in the model
+  var clampPredictorsInner = function(name){
+    
+    // Get image band matching current model predictor
+    var img_band = img.select([name]);
+    
+    // Get feature from the predictor range feature collection
+    var predictor_range = predictors_range.filter(ee.Filter.eq("predictor", name)).first();
+    
+    // Get min/max from the training data
+    var min = ee.Number.parse(predictor_range.get('p0_data'));
+    var max = ee.Number.parse(predictor_range.get('p100_data'));
+
+    // Add buffer
+    min = min.subtract(min.multiply(buffer_percent).abs());
+    max = max.add(max.multiply(buffer_percent).abs());
+    
+    // Clamp image band to training data min/max
+    img_band = img_band.clamp(min, max);
+    
+    // Return clamped image
+    return img_band;
+    
+  };
+  
+  // Returns a list of clamped images
+  var clampedImgList = model_predictors.map(clampPredictorsInner);
+  
+  // Convert to image collection then to multiband image then assign correct band names
+  var clampedImg = ee.ImageCollection.fromImages(clampedImgList).toBands().rename(model_predictors);
+
+  // Get cover predictors, LC predictors, intercept, source year  
+  var coverPreds = img.select(cover_predictors);
+  var LCpreds = img.select(LC_predictors);
+  var int = img.select(['intercept']);
+  var srcYr = img.select(['source_year']);
+
+  // Get time series year
+  var yr = img.get('year');
+  
+  // Return clamped image, add additional predictors, set time series year property
+  // Start with cover predictors and add clamped image to it -- this way the clamped bands will overwrite the original cover bands where they have the same name
+  return coverPreds.addBands({srcImg: clampedImg, overwrite: true}).addBands(LCpreds).addBands(int).addBands(srcYr).set('year', yr);
+  
+};
+
+if(transform == 'log'){
+  predictor_time_series = predictor_time_series.map(clampPredictors);
+  print('Final predictors time series, clamped', predictor_time_series);
+}else{
+  print('No clamping performed');
+}
+
+// =============================
+// 6. PREDICT BIOMASS ==========
+// =============================
+
+// Map across predictor_time_series image collection
+// Each image represents a year
+
+// 6.1 TIDY COEFFICIENT DATA ==========
+
+coef = coef.map(fxns.tidy_predictors_PFTs);
+
+// 6.2 SET PARAMETERS ==========
+
+var MCiter = ee.List.sequence(1, 100, 1);
+
+var treeThreshold = 100; // 10, 25, (100 = no mask)
+
+// 6.3 OUTER MAP - MAP ACROSS PREDICTOR TIME SERIES ==========
+
+var predictBiomassTimeSeries = function(img){
+  
+  // 6.4 INNER MAP - MAP ACROSS MONTE CARLO ITERATION NUMBERS ==========
+  
+  var predictBiomassMCiter = function(iter){
+    
+    // 6.5 CLIP TO REGION ==========
+    
+    img = img.clip(AOI);
+    
+    // 6.6 CREATE TREE MASK ==========
+  
+    // Select the tree bands
+    var cTree = img.select('cTree_cover');
+    var bTree = img.select('bTree_cover');
+  
+    // Create masks -- broadleaf + coniferous less than or equal to threshold
+    var Tree = cTree.add(bTree);
+    var Treemask = Tree.lte(treeThreshold);
+    
+    // 6.7 SUBSET AND TIDY COEFFICIENT DATA ==========
+    
+    // Subset coefficient dataset to PFTs
+    var coef_decid = coef.filter(ee.Filter.eq('pft', 'allDecShrub_cover')).filter(ee.Filter.eq('MCiter', iter));
+    var coef_eg = coef.filter(ee.Filter.eq('pft', 'allEvShrub_cover')).filter(ee.Filter.eq('MCiter', iter));
+    var coef_forb = coef.filter(ee.Filter.eq('pft', 'allForb_cover')).filter(ee.Filter.eq('MCiter', iter));
+    var coef_gram = coef.filter(ee.Filter.eq('pft', 'graminoid_cover')).filter(ee.Filter.eq('MCiter', iter));
+    var coef_lichen = coef.filter(ee.Filter.eq('pft', 'tmlichen_light2_cover')).filter(ee.Filter.eq('MCiter', iter));
+
+    // Get PFT names
+    var coef_decid_PFT_name = coef_decid.aggregate_array('pft').get(0);
+    var coef_eg_PFT_name = coef_eg.aggregate_array('pft').get(0);
+    var coef_forb_PFT_name = coef_forb.aggregate_array('pft').get(0);
+    var coef_gram_PFT_name = coef_gram.aggregate_array('pft').get(0);
+    var coef_lichen_PFT_name = coef_lichen.aggregate_array('pft').get(0);
+
+    // Get response transformation for each PFT
+    var coef_decid_transformation = coef_decid.aggregate_array('transform').get(0);
+    var coef_eg_transformation = coef_eg.aggregate_array('transform').get(0);
+    var coef_forb_transformation = coef_forb.aggregate_array('transform').get(0);
+    var coef_gram_transformation = coef_gram.aggregate_array('transform').get(0);
+    var coef_lichen_transformation = coef_lichen.aggregate_array('transform').get(0);
+
+    // Get smear factor for each PFT
+    var coef_decid_smear = coef_decid.aggregate_array('smear_factor').get(0);
+    var coef_eg_smear = coef_eg.aggregate_array('smear_factor').get(0);
+    var coef_forb_smear = coef_forb.aggregate_array('smear_factor').get(0);
+    var coef_gram_smear = coef_gram.aggregate_array('smear_factor').get(0);
+    var coef_lichen_smear = coef_lichen.aggregate_array('smear_factor').get(0);
+
+    // Get predictor names for each PFT
+    var coef_decid_names = coef_decid.aggregate_array('predictor');
+    var coef_eg_names = coef_eg.aggregate_array('predictor');
+    var coef_forb_names = coef_forb.aggregate_array('predictor');
+    var coef_gram_names = coef_gram.aggregate_array('predictor');
+    var coef_lichen_names = coef_lichen.aggregate_array('predictor');
+
+    // Get coefficient values for each PFT
+    var coef_decid_values = coef_decid.aggregate_array('coef_orig');
+    var coef_eg_values = coef_eg.aggregate_array('coef_orig');
+    var coef_forb_values = coef_forb.aggregate_array('coef_orig');
+    var coef_gram_values = coef_gram.aggregate_array('coef_orig');
+    var coef_lichen_values = coef_lichen.aggregate_array('coef_orig');
+
+    // 6.8 GET PREDICTOR BANDS THAT CORRESPOND TO SELECTED PREDICTORS FOR EACH PFT ==========
+    
+    // Get predictor stacks for each PFT
+    var predictors_decid = img.select(coef_decid_names);
+    var predictors_eg = img.select(coef_eg_names);
+    var predictors_forb = img.select(coef_forb_names);
+    var predictors_gram = img.select(coef_gram_names);
+    var predictors_lichen = img.select(coef_lichen_names);
+
+    // NOTE: bands are selected in the order they appear in the names list, so we can apply matrix multiplication without any sorting
+    
+    // 6.9 PREPARE COEFFICIENTS FOR MODELING ==========
+    
+    // From a list of coefficient values, create a list of single value images, one image per coefficient value
+    var coef_img_list_decid = coef_decid_values.map(fxns.listToSingleValueImages);
+    var coef_img_list_eg = coef_eg_values.map(fxns.listToSingleValueImages);
+    var coef_img_list_forb = coef_forb_values.map(fxns.listToSingleValueImages);
+    var coef_img_list_gram = coef_gram_values.map(fxns.listToSingleValueImages);
+    var coef_img_list_lichen = coef_lichen_values.map(fxns.listToSingleValueImages);
+
+    // Collapse list of single band image to a multiband image, and rename with predictor names that match coefficient values
+    var coef_img_decid = ee.ImageCollection.fromImages(coef_img_list_decid).toBands().rename(coef_decid_names);
+    var coef_img_eg = ee.ImageCollection.fromImages(coef_img_list_eg).toBands().rename(coef_eg_names);
+    var coef_img_forb = ee.ImageCollection.fromImages(coef_img_list_forb).toBands().rename(coef_forb_names);
+    var coef_img_gram = ee.ImageCollection.fromImages(coef_img_list_gram).toBands().rename(coef_gram_names);
+    var coef_img_lichen = ee.ImageCollection.fromImages(coef_img_list_lichen).toBands().rename(coef_lichen_names);
+
+    // 6.10 APPLY LINEAR REGRESSION MODELS ==========
+    
+    // Multiply the predictors * the coefficients
+    var predictor_x_coef_decid = predictors_decid.multiply(coef_img_decid);
+    var predictor_x_coef_eg = predictors_eg.multiply(coef_img_eg);
+    var predictor_x_coef_forb = predictors_forb.multiply(coef_img_forb);
+    var predictor_x_coef_gram = predictors_gram.multiply(coef_img_gram);
+    var predictor_x_coef_lichen = predictors_lichen.multiply(coef_img_lichen);
+
+    // Identify PFTs that are missing from this MC iteration -- their intercept band will be a constant with the no data value, -999999999
+    // Get intercept, only keep areas that are not equal to -999999999
+    var int_mask_decid =  predictor_x_coef_decid.select(['intercept']).neq(-999999999); 
+    var int_mask_eg =  predictor_x_coef_eg.select(['intercept']).neq(-999999999); 
+    var int_mask_forb =  predictor_x_coef_forb.select(['intercept']).neq(-999999999); 
+    var int_mask_gram =  predictor_x_coef_gram.select(['intercept']).neq(-999999999); 
+    var int_mask_lichen =  predictor_x_coef_lichen.select(['intercept']).neq(-999999999); 
+
+    // Mask missing PFTs
+    predictor_x_coef_decid = predictor_x_coef_decid.updateMask(int_mask_decid);
+    predictor_x_coef_eg = predictor_x_coef_eg.updateMask(int_mask_eg);
+    predictor_x_coef_forb = predictor_x_coef_forb.updateMask(int_mask_forb);
+    predictor_x_coef_gram = predictor_x_coef_gram.updateMask(int_mask_gram);
+    predictor_x_coef_lichen = predictor_x_coef_lichen.updateMask(int_mask_lichen);
+
+    // Add together
+    // Raise to power of two, or exponentiate depending on how the response variable was transformed during modeling
+    // 'log' = .exp().multiply(), 'sqrt' = .pow(2).add()
+    // Apply smear factor
+  
+    if(transform == 'log'){
+      var biomass_decid = predictor_x_coef_decid.reduce('sum').exp().multiply(ee.Image.constant(coef_decid_smear));
+      var biomass_eg = predictor_x_coef_eg.reduce('sum').exp().multiply(ee.Image.constant(coef_eg_smear));
+      var biomass_forb = predictor_x_coef_forb.reduce('sum').exp().multiply(ee.Image.constant(coef_forb_smear));
+      var biomass_gram = predictor_x_coef_gram.reduce('sum').exp().multiply(ee.Image.constant(coef_gram_smear));
+      var biomass_lichen = predictor_x_coef_lichen.reduce('sum').exp().multiply(ee.Image.constant(coef_lichen_smear));
+      print('Biomass predicted, log transform');
+    }else{
+      var biomass_decid = predictor_x_coef_decid.reduce('sum').pow(2).add(ee.Image.constant(coef_decid_smear));
+      var biomass_eg = predictor_x_coef_eg.reduce('sum').pow(2).add(ee.Image.constant(coef_eg_smear));
+      var biomass_forb = predictor_x_coef_forb.reduce('sum').pow(2).add(ee.Image.constant(coef_forb_smear));
+      var biomass_gram = predictor_x_coef_gram.reduce('sum').pow(2).add(ee.Image.constant(coef_gram_smear));
+      var biomass_lichen = predictor_x_coef_lichen.reduce('sum').pow(2).add(ee.Image.constant(coef_lichen_smear));
+      print('Biomass predicted, sqrt transform');
+    }
+
+    // 6.11 CONVERT TO APPROPRIATE UNITS ==========
+    
+    // Convert to g/m-2
+    // Most convenient for data storage, values range from 0 - 7,600
+    // Round to nearest integer
+    // Cast to unsigned integer 16 (0 to 65,535)
+    biomass_decid = biomass_decid.divide(900).round().toUint16();
+    biomass_eg = biomass_eg.divide(900).round().toUint16();
+    biomass_forb = biomass_forb.divide(900).round().toUint16();
+    biomass_gram = biomass_gram.divide(900).round().toUint16();
+    biomass_lichen = biomass_lichen.divide(900).round().toUint16();
+
+    // 6.12 FILL IN ZERO COVER AREAS ==========
+    
+    // Create masks, keep only areas where cover > 0%
+    var mask_decid = img.select([coef_decid_PFT_name]).gt(0);
+    var mask_eg = img.select([coef_eg_PFT_name]).gt(0);
+    var mask_forb = img.select([coef_forb_PFT_name]).gt(0);
+    var mask_gram = img.select([coef_gram_PFT_name]).gt(0);
+    var mask_lichen = img.select([coef_lichen_PFT_name]).gt(0);
+
+    // Multiply biomass images by masks (instead of 'updateMask')
+    // Masks are 1s and 0s -- wherever there is a 1, keep biomass value, wherever there is a 0, biomass is 0
+    biomass_decid = ee.Image(biomass_decid.multiply(mask_decid));
+    biomass_eg = ee.Image(biomass_eg.multiply(mask_eg));
+    biomass_forb = ee.Image(biomass_forb.multiply(mask_forb));
+    biomass_gram = ee.Image(biomass_gram.multiply(mask_gram));
+    biomass_lichen = ee.Image(biomass_lichen.multiply(mask_lichen));
+
+    // 6.13 CREATE MULTIBAND IMAGE ==========
+    
+    var biomass_collection = ee.ImageCollection.fromImages([biomass_decid, biomass_eg, biomass_forb, biomass_gram, biomass_lichen]);
+    var biomass_all = biomass_collection.toBands();
+    biomass_all = biomass_all.rename(['biomass_decid', 'biomass_eg', 'biomass_forb', 'biomass_gram', 'biomass_lichen']);
+
+    // 6.14 MASK TREES ==========
+  
+    biomass_all = biomass_all.updateMask(Treemask);
+    
+    // 6.15 RETURN ==========
+  
+    return biomass_all.set('year', img.get('year'));
+  
+  };
+  
+  // 6.16 MAP ACROSS MONTE CARLO ITERATIONS ==========
+
+  var biomass_MCiter = ee.ImageCollection(MCiter.map(predictBiomassMCiter));
+  
+  // 6.17 REDUCE AND TIDY ==========
+  
+  // Median, 2.5th percentile, 97.5th percentile (95% confidence interval)
+  // Max raw ensures that values are calculated directly, rather than from histogram
+
+  // Calculate median, confidence interval, all necessary percentiles
+  var CI_percentiles = biomass_MCiter.reduce(ee.Reducer.percentile({percentiles: [2, 3, 50, 97, 98], maxRaw: 101}));
+  
+  // Break into invidivual percentiles
+  var predictions_2 = CI_percentiles.select([".*p2"]);
+  var predictions_3 = CI_percentiles.select([".*p3"]);
+  var predictions_50 = CI_percentiles.select([".*p50"]);
+  var predictions_97 = CI_percentiles.select([".*p97"]);
+  var predictions_98 = CI_percentiles.select([".*p98"]);
+
+  // Average 2 and 3, 97 and 98 to get 2.5 and 97.5
+  var predictions_lwr = predictions_2.add(predictions_3).divide(2);
+  var predictions_upr = predictions_97.add(predictions_98).divide(2);
+  
+  // Rename
+  var lwr_names = predictions_lwr.bandNames().map(function(name){return ee.String(name).replace('p2', 'p2_5')});
+  var upr_names = predictions_upr.bandNames().map(function(name){return ee.String(name).replace('p97', 'p97_5')});
+  predictions_lwr = predictions_lwr.rename(lwr_names);
+  predictions_upr = predictions_upr.rename(upr_names);
+
+  var predictions_CIs = predictions_50.addBands(predictions_lwr).addBands(predictions_upr);
+  
+  // Convert to unsigned integers to save on storage
+  predictions_CIs = predictions_CIs.round().toUint16();
+  
+  // Add source year band
+  predictions_CIs = predictions_CIs.addBands(img.select(['source_year']));
+  
+  /// Return
+  return predictions_CIs.set('year', img.get('year'));
+  
+};
+
+// 6.18 MAP OVER PREDICTOR TIME SERIES ==========
+
+var biomass_time_series = predictor_time_series.map(predictBiomassTimeSeries);
+
+// 6.19 MASK OUT BARRENS ==========
+// Pixels that are classified as 'barren' in the Wang land cover map are forced to zeros
+// Should be negligible biomass here
+// Solves issues with terrain shadows
+
+biomass_time_series = biomass_time_series.map(fxns.barrensToZero);
+
+print('The final biomass time series (barrens masked) is: ', biomass_time_series);
+
+print(ee.Image(fxns.getX(biomass_time_series, 0)));
+
+// =============================
+// 7. EXPORT TO ASSET ==========
+// =============================
+
+// 7.2 INDIVIDUALLY EXPORT ANNUAL IMAGES =========
+// One image per year, all PFTs included (8 images total, 18 bands each for median)
+// Computation/memory issues when using batch export function (browser crashes)
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 0)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_0',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/0', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 1)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_1',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/1', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 2)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_2',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/2', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 3)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_3',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/3', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 4)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_4',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/4', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 5)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_5',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/5', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 6)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_6',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/6', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
+
+// Export.image.toAsset({
+//   image:  ee.Image(fxns.getX(biomass_time_series, 7)),
+//   description: 'biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2_7',
+//   assetId: '*/biomass_predicted_1985_2020_UAV_sqrt_nrmse_nmbe_corr_MC_CIs_4_2/7', 
+//   region: AOI,
+//   scale: 30,
+//   maxPixels: 1e12
+// });
