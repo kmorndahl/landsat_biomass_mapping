@@ -1,3 +1,13 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# Produces plots to compare standardized coefficient values across plant functional types
+# Uses external validation data
+
+# NOTE: output directory structure not hosted at github
+
 library(dplyr)
 library(tidyr)
 library(yardstick)
@@ -9,20 +19,22 @@ library(ggpmisc)
 
 # 0. SET OUTPUT DIRECTORY AND GET DATA
 
+output_results = FALSE
+
 # Set output directory
-setwd('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/coef')
+dir = '*/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/coef'
 
 # Import coefficient model -----
-coef_FIELD_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/FINAL_MODELS_nrmse_nmbe_corr_avg_log/glmmLasso_coefficients_finalModels_field_log_nrmse_nmbe_corr_avg_MC_all.csv')
-coef_FIELD_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/FINAL_MODELS_nrmse_nmbe_corr_avg_sqrt/glmmLasso_coefficients_finalModels_field_sqrt_nrmse_nmbe_corr_avg_MC_all.csv')
-coef_UAV_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/FINAL_MODELS_nrmse_nmbe_corr_avg_log/glmmLasso_coefficients_finalModels_UAV_log_nrmse_nmbe_corr_avg_MC_all.csv')
-coef_UAV_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/FINAL_MODELS_nrmse_nmbe_corr_avg_sqrt/glmmLasso_coefficients_finalModels_UAV_sqrt_nrmse_nmbe_corr_avg_MC_all.csv')
+coef_FIELD_log = read.csv('*/UAV_to_LS/results/field/FINAL_MODELS_nrmse_nmbe_corr_avg_log/glmmLasso_coefficients_finalModels_field_log_nrmse_nmbe_corr_avg_MC_all.csv')
+coef_FIELD_sqrt = read.csv('*/UAV_to_LS/results/field/FINAL_MODELS_nrmse_nmbe_corr_avg_sqrt/glmmLasso_coefficients_finalModels_field_sqrt_nrmse_nmbe_corr_avg_MC_all.csv')
+coef_UAV_log = read.csv('*/UAV_to_LS/results/UAV/FINAL_MODELS_nrmse_nmbe_corr_avg_log/glmmLasso_coefficients_finalModels_UAV_log_nrmse_nmbe_corr_avg_MC_all.csv')
+coef_UAV_sqrt = read.csv('*/UAV_to_LS/results/UAV/FINAL_MODELS_nrmse_nmbe_corr_avg_sqrt/glmmLasso_coefficients_finalModels_UAV_sqrt_nrmse_nmbe_corr_avg_MC_all.csv')
 
 # Import best model parameters (minimum loss function) -----
-mins_FIELD_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/log/minimums_rmse_nmbe_corr_avg_log.csv')
-mins_FIELD_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/sqrt/minimums_rmse_nmbe_corr_avg_sqrt.csv')
-mins_UAV_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/log/minimums_rmse_nmbe_corr_avg_log.csv')
-mins_UAV_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/sqrt/minimums_rmse_nmbe_corr_avg_sqrt.csv')
+mins_FIELD_log = read.csv('*/UAV_to_LS/results/field/log/minimums_rmse_nmbe_corr_avg_log.csv')
+mins_FIELD_sqrt = read.csv('*/UAV_to_LS/results/field/sqrt/minimums_rmse_nmbe_corr_avg_sqrt.csv')
+mins_UAV_log = read.csv('*/UAV_to_LS/results/UAV/log/minimums_rmse_nmbe_corr_avg_log.csv')
+mins_UAV_sqrt = read.csv('*/UAV_to_LS/results/UAV/sqrt/minimums_rmse_nmbe_corr_avg_sqrt.csv')
 
 ######################################################################################################
 ######################################################################################################
@@ -203,14 +215,18 @@ plt =
 
 plt
 
-outName = 'finalModels_MC_avg_std_coefficients_vertical.png'
+if(output_results){
 
-ggsave(
-  outName,
-  plt,
-  width = 50,
-  height = 60,
-  units = 'cm',
-  dpi = 600,
-  bg = 'white'
-)
+  outName = 'finalModels_MC_avg_std_coefficients_vertical.png'
+  
+  ggsave(
+    paste0(dir, outName),
+    plt,
+    width = 50,
+    height = 60,
+    units = 'cm',
+    dpi = 600,
+    bg = 'white'
+  )
+
+}

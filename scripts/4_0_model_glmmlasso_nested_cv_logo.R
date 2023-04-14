@@ -1,6 +1,15 @@
 ######################################################################################################
 ######################################################################################################
 
+# CODE DESCRIPTION
+
+# This script performs the glmmLasso modeling, including leave-one-group-out nested cross-validation
+
+# NOTE: output directory structure not hosted at github
+
+######################################################################################################
+######################################################################################################
+
 # 1. SET UP ------------------------------
 
 # 1.1 LIBRARIES ------------------------------
@@ -9,11 +18,13 @@ library(dplyr)
 library(caret)
 library(glmmLasso)
 library(ggplot2)
-source('/scratch/kmo265/UAV_scripts/UAV_to_LS_fxns.R')
+source('scripts/UAV_to_LS_fxns.R')
 
 params = commandArgs(trailingOnly = TRUE)
 
 # 1.2 SET PARAMETERS ------------------------------
+
+output_results = FALSE
 
 # Set data type
 data_type = 'field' # Choose 'field' or 'UAV'
@@ -61,7 +72,7 @@ if(data_type == 'field'){
 }
 
 # Set training data directory
-trainingDataDir = file.path('/scratch/kmo265/1_UAV_to_LS_final/data/')
+trainingDataDir = file.path('data/')
 print(paste0('The training data directory is: ', trainingDataDir))
 cat("\n")
 
@@ -130,18 +141,22 @@ for(cut_number in cut_numbers){ ### START CUT NUMBER LOOP
   # SET OUTPUT DIRECTORY ######################################################################################################
   #################################################################################################################################
   
-  # Create path name
-  if(!incl_LC){LCtext = '_noLC'}else{LCtext = ''}
-  outPath = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/', transform, '/cut', cut_number, LCtext)
+  if(output_results){
   
-  # Create directory if it does not already exist
-  dir.create(outPath)
+    # Create path name
+    if(!incl_LC){LCtext = '_noLC'}else{LCtext = ''}
+    outPath = paste0('*/UAV_to_LS/results/', data_type, '/', transform, '/cut', cut_number, LCtext)
+    
+    # Create directory if it does not already exist
+    dir.create(outPath)
+    
+    # Set as current working directory
+    setwd(outPath)
+    
+    print(paste0('The current output directory is: ', outPath))
+    cat("\n")
   
-  # Set as current working directory
-  setwd(outPath)
-  
-  print(paste0('The current output directory is: ', outPath))
-  cat("\n")
+  }
   
   #################################################################################################################################
   #################################################################################################################################
@@ -591,15 +606,19 @@ for(cut_number in cut_numbers){ ### START CUT NUMBER LOOP
       theme_minimal()+
       labs(x = 'log(Lambda)', y = 'Loss value') 
     
-    outName = paste0('lambdaCV_cutNum', cut_number, '_', pft, '_test', out_site, '.png')
+    if(output_results){
+      
+      outName = paste0('lambdaCV_cutNum', cut_number, '_', pft, '_test', out_site, '.png')
+      
+      ggsave(
+        outName,
+        lambda_tracking,
+        width = 40,
+        height = 30,
+        units = 'cm'
+      )
     
-    ggsave(
-      outName,
-      lambda_tracking,
-      width = 40,
-      height = 30,
-      units = 'cm'
-    )
+    }
     
     print('Results summarized from all inner CV folds')
     cat("\n")
@@ -752,10 +771,14 @@ for(cut_number in cut_numbers){ ### START CUT NUMBER LOOP
     
   } ### END PFT LOOP
   
-  write.csv(predictions, paste0('glmmLasso_predictions_cutNum', cut_number, '_cv', fold_num, '.csv'), row.names = FALSE)
-  write.csv(coefficients, paste0('glmmLasso_coefficients_cutNum', cut_number, '_cv', fold_num, '.csv'), row.names = FALSE)
+  if(output_results){
+    
+    write.csv(predictions, paste0('glmmLasso_predictions_cutNum', cut_number, '_cv', fold_num, '.csv'), row.names = FALSE)
+    write.csv(coefficients, paste0('glmmLasso_coefficients_cutNum', cut_number, '_cv', fold_num, '.csv'), row.names = FALSE)
+    
+    print('Final predictions and coefficients data frames saved as .csv')
+    cat("\n")
   
-  print('Final predictions and coefficients data frames saved as .csv')
-  cat("\n")
+  }
   
 } ### END CUT NUMBER LOOP

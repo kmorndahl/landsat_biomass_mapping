@@ -1,3 +1,16 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# For each data type, transform, aggregates coefficient and prediction data across cross-validation folds and cut numbers
+# For each plant functional type, chooses the cut number that produces the most accurate results
+#   - Based on an average of NRMSE, NMBE and correlation
+# Produces plot showing differences in NRMSE/NMBE/correlation among cut numbers (i.e. number of variables)
+# Saves coefficient and prediction data for the best fitting model
+
+# NOTE: output directory structure not hosted at github
+
 library(dplyr)
 library(Metrics)
 library(qdapTools)
@@ -10,6 +23,8 @@ library(ggplot2)
 
 # 1.0 SET PARAMETERS ------------------------------------------------------
 
+output_results = FALSE
+
 # Set data type
 data_type = 'field' # Choose 'field' or 'UAV'
 
@@ -18,9 +33,8 @@ transform = 'sqrt' # Choose 'sqrt' or 'log'
 
 # 1.1 GET FOLDERS ------------------------------------------------------
 
-dir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/', transform, '/')
+dir = paste0('*/UAV_to_LS/results/', data_type, '/', transform, '/')
 print(paste0('The output directory is: ', dir))
-setwd(dir)
 cat("\n")
 
 folders = list.files(dir, full.names = TRUE, recursive = FALSE, pattern = '*cut*')
@@ -40,7 +54,7 @@ if(data_type == 'field'){
 }
 
 # Get feature correlation data
-corr_path = file.path('/scratch/kmo265/1_UAV_to_LS_final/data/', cut_number_list_file)
+corr_path = file.path('data/', cut_number_list_file)
 
 corr = read.csv(corr_path)
 
@@ -81,8 +95,12 @@ for(folder in folders){
   
 }
 
-write.csv(coefTotal, 'glmmLasso_coefficients_ALL.csv', row.names = FALSE)
-write.csv(predTotal, 'glmmLasso_predictions_ALL.csv', row.names = FALSE)
+if(output_results){
+  
+  write.csv(coefTotal, paste0(dir, 'glmmLasso_coefficients_ALL.csv'), row.names = FALSE)
+  write.csv(predTotal, paste0(dir, 'glmmLasso_predictions_ALL.csv'), row.names = FALSE)
+
+}
 
 ######################################################################################################
 ######################################################################################################
@@ -212,7 +230,7 @@ for(combo in combos){
 }
 
 # Save chosen parameters
-write.csv(minimums_nrmse_nmbe_corr_avg, paste0('minimums_nrmse_nmbe_corr_avg_', transform, '.csv'), row.names = FALSE)
+if(output_results){write.csv(minimums_nrmse_nmbe_corr_avg, paste0(dir, 'minimums_nrmse_nmbe_corr_avg_', transform, '.csv'), row.names = FALSE)}
 
 ######################################################################################################
 ######################################################################################################
@@ -264,18 +282,22 @@ for(combo in combos){
           title = element_text(size=title_text_size))+
     labs(x = 'Number of variables', y = 'Relative RMSE/NMBE/Correlation Average', col = 'LC', shape = 'Loss Function')
   
-  outName = 'glmmLasso_nrmse_nmbe_corr_avg_comparison.png'
-
-  print(outName)
-  cat('\n')
+  if(output_results){
   
-  ggsave(
-    outName,
-    plt,
-    width = 40,
-    height = 30,
-    units = 'cm'
-  )  
+    outName = 'glmmLasso_nrmse_nmbe_corr_avg_comparison.png'
+  
+    print(outName)
+    cat('\n')
+    
+    ggsave(
+      paste0(dir, outName),
+      plt,
+      width = 40,
+      height = 30,
+      units = 'cm'
+    )  
+  
+  }
   
 }
 
@@ -326,7 +348,11 @@ for(combo in combos){
   print(outCoef_nrmse_nmbe_corr_avg)
   cat('\n')
   
-  write.csv(bestPreds_nrmse_nmbe_corr_avg, outPred_nrmse_nmbe_corr_avg, row.names = FALSE)
-  write.csv(bestCoefs_nrmse_nmbe_corr_avg, outCoef_nrmse_nmbe_corr_avg, row.names = FALSE)  
+  if(output_results){
+    
+    write.csv(bestPreds_nrmse_nmbe_corr_avg, paste0(dir, outPred_nrmse_nmbe_corr_avg), row.names = FALSE)
+    write.csv(bestCoefs_nrmse_nmbe_corr_avg, paste0(dir, outCoef_nrmse_nmbe_corr_avg), row.names = FALSE)  
+  
+  }
   
 }

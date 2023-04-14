@@ -1,7 +1,18 @@
 ######################################################################################################
 ######################################################################################################
 
+# CODE DESCRIPTION
+
+# Aggregates coefficient data across Monte Carlo iterations
+
+# NOTE: output directory structure not hosted at github
+
+######################################################################################################
+######################################################################################################
+
 # 1. GET FOLDERS AND DATA ------------------------------------------------------
+
+output_results = FALSE
 
 # Set data type
 data_type = 'field' # Choose 'field' or 'UAV'
@@ -10,15 +21,14 @@ data_type = 'field' # Choose 'field' or 'UAV'
 transform = 'sqrt' # Choose 'sqrt' or 'log'
 
 # Set directory
-dir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/FINAL_MODELS_nrmse_nmbe_corr_avg_', transform)
+dir = paste0('*/UAV_to_LS/results/', data_type, '/FINAL_MODELS_nrmse_nmbe_corr_avg_', transform)
 print(paste0('The output directory is: ', dir))
-setwd(dir)
 cat("\n")
 
 # Set output file name
 outName = paste0('glmmLasso_coefficients_finalModels_', data_type, '_', transform, '_', 'nrmse_nmbe_corr_avg_MC_all.csv')
   
-# Get folders in output directory
+# Get files in output directory
 files = list.files(full.names = TRUE, recursive = FALSE, pattern = '*glmmLasso_coefficients_finalModels_MCiter*')
 
 ######################################################################################################
@@ -53,4 +63,4 @@ coefTidy$smear_factor[is.na(coefTidy$smear_factor)] = -999999999 # Convert NAs f
 
 # 4. SAVE ------------------------------------------------------
 
-write.csv(coefTidy, outName, row.names = FALSE)
+if(output_results){write.csv(coefTidy, paste0(dir, outName), row.names = FALSE)}

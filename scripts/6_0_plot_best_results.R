@@ -1,3 +1,14 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# For each combination of data type and transform, gets the prediction and coefficient data for the best model across cut numbers and:
+#   - Plots predicted vs. observed across cross-validation folds and reports RMSE
+#   - Plots coefficient values
+
+# NOTE: output directory structure not hosted at github
+
 library(ggplot2)
 library(dplyr)
 library(yardstick)
@@ -14,6 +25,8 @@ library(tidyverse)
 
 # 1.0 SET PARAMETERS ------------------------------------------------------
 
+output_results = FALSE
+
 # Set data type
 data_type = 'field' # Choose 'field' or 'UAV'
 
@@ -23,9 +36,8 @@ transform = 'sqrt' # Choose 'sqrt' or 'log'
 # 1.1 GET FILES ------------------------------------------------------
 
 # Set directory
-dir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/', transform, '/')
+dir = paste0('*/UAV_to_LS/results/', data_type, '/', transform, '/')
 print(paste0('The output directory is: ', dir))
-setwd(dir)
 cat("\n")
 
 # Get file names
@@ -197,15 +209,19 @@ for(pred_path in pred_paths){
   
   plt
   
-  outName = paste0('glmmLasso_results_', min_loss_criteria, '.png')
+  if(output_results){
   
-  ggsave(
-    outName,
-    plt,
-    width = 40,
-    height = 30,
-    units = 'cm'
-  )
+    outName = paste0('glmmLasso_results_', min_loss_criteria, '.png')
+    
+    ggsave(
+      paste0(dir, outName),
+      plt,
+      width = 40,
+      height = 30,
+      units = 'cm'
+    )
+  
+  }
   
 }
 
@@ -254,14 +270,18 @@ for(coef_path in coef_paths){
   
   plt
   
-  outName = paste0('glmmLasso_coefficients_', min_loss_criteria, '.png')
+  if(output_results){
   
-  ggsave(
-    outName,
-    plt,
-    width = 60,
-    height = 30,
-    units = 'cm'
-  )
+    outName = paste0('glmmLasso_coefficients_', min_loss_criteria, '.png')
+    
+    ggsave(
+      paste0(dir, outName),
+      plt,
+      width = 60,
+      height = 30,
+      units = 'cm'
+    )
+  
+  }
   
 }

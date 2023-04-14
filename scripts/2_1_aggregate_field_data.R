@@ -1,10 +1,23 @@
 ######################################################################################################
 ######################################################################################################
 
+# CODE DESCRIPTION
+
+# This script performs inverse distance weighting of quadrat field harvest data per landsat pixel centroid
+#   - Selects only landsat pixel centroids within 50m of the site center (quadrant 50m)
+#   - Associates appropriate biomass harvest quadrats with each landsat pixel centroid
+#   - Calculates distances between biomass harvest quadrats and landsat pixel centroids
+#   - Calculates and applies the inverse distance weights to each biomass harvest quadrat
+#   - Calcuates mean biomass for each landsat pixel centroid, using inverse distance weighted biomass harvest quadrat data
+
+######################################################################################################
+######################################################################################################
+
 # SET OUTPUT DIRECTORY
 
-dir = '//minim.hpc.nau.edu/scratch/kmo265/1_UAV_to_LS_final/data/'
-setwd(dir)
+output_results = FALSE
+
+outPath = 'data/'
 
 outName = 'biomass_field_data_ls.csv'
 
@@ -21,10 +34,11 @@ library(sf)
 
 # 1.1 READ IN DATA AND TIDY --------------------------------------------------------------------------------------------------------------------------------
 
-biomass_field = read.csv('biomass_field_data_lat_long.csv')
-biomass_UAV = read.csv('pixel_centroids_predictors.csv') # Not quite uav_cover_biomass_satellite_predictors_coverPredictedWide_1m75_30m75_UPDATE.csv, has a few more plotIds bc this is from when Matt sent data that is only filtered by 75% at the 30m stage, the other is filtered by 75% at both 1m and 30m stage
+biomass_field = read.csv(paste0(outPath, 'biomass_field_data_lat_long.csv'))
+biomass_UAV = read.csv(paste0(outPath, 'pixel_centroids_predictors.csv'))
 
 # Select necessary columns
+biomass_UAV_predictors = biomass_UAV
 biomass_UAV = biomass_UAV %>% 
   dplyr::select(calval_siteCode, calval_plotId, latitude, longitude)
 
@@ -93,7 +107,7 @@ field_lat_long = cbind(data.frame(st_drop_geometry(field_quads_sp)), st_coordina
 
 # Left join lat/long information to selected, repeated points and quadrats data frames and convert back to spatial points
 biomass_selected_quads_rep_sp = sf::st_as_sf(dplyr::left_join(selected_quads_rep_df, field_lat_long, by = c('calval_siteCode.UAV'='site_code.field', 'quadrat_num.field'='quadrat_num.field')), coords = c('X', 'Y'), crs = 4326)
-biomass_selected_pts_rep_sp = sf::st_as_sf(dplyr::left_join(selected_pts_rep_df, UAV_lat_long, by = c('calval_plotId.UAV'='calval_plotId.UAV')), coords = c('X', 'Y'), crs = 4326)
+biomass_selected_pts_rep_sp = sf::st_as_sf(dplyr::left_join(selected_pts_rep_df, UAV_lat_long, by = c('calval_plotId.UAV'='calval_plotId.UAV', 'calval_siteCode.UAV'='calval_siteCode.UAV')), coords = c('X', 'Y'), crs = 4326)
 
 # Calculate pairwise distances
 distances = st_distance(biomass_selected_quads_rep_sp, biomass_selected_pts_rep_sp, by_element = TRUE)
@@ -174,11 +188,11 @@ names(biomass_selected_quads_pts_distances_means_se) = c("calval_plotId", "calva
 # 3.5 JOIN PREDICTORS --------------------------------------------------------------------------------------------------------------------------------
 
 # Join
-biomass_selected_quads_pts_distances_final = dplyr::left_join(biomass_selected_quads_pts_distances_means_se, biomass_UAV, by = 'calval_plotId')
+biomass_selected_quads_pts_distances_final = dplyr::left_join(biomass_selected_quads_pts_distances_means_se, biomass_UAV_predictors, by = 'calval_plotId')
 
 # Replace spaces with underscores
 biomass_selected_quads_pts_distances_final$calval_pft = gsub(' ', '_', biomass_selected_quads_pts_distances_final$calval_pft)
 
 # 3.6 SAVE --------------------------------------------------------------------------------------------------------------------------------
 
-write.csv(biomass_selected_quads_pts_distances_final, outName, row.names = FALSE)
+if(output_results){write.csv(biomass_selected_quads_pts_distances_final, paste0(outPath, outName), row.names = FALSE)}

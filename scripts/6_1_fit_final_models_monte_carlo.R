@@ -1,7 +1,18 @@
 ######################################################################################################
 ######################################################################################################
 
+# CODE DESCRIPTION
+
+# Calculates Monte Carlo permutations for best fitting model for each data type and transform combination
+
+# NOTE: output directory structure not hosted at github
+
+######################################################################################################
+######################################################################################################
+
 # 0. SET OUTPUT DIRECTORY
+
+output_results = FALSE
 
 # Set data type
 data_type = 'field' # Choose 'field' or 'UAV'
@@ -10,7 +21,7 @@ data_type = 'field' # Choose 'field' or 'UAV'
 transform = 'sqrt' # Choose 'sqrt' or 'log'
 
 # Set directory
-dir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/FINAL_MODELS_nrmse_nmbe_corr_avg_', transform)
+dir = paste0('*/UAV_to_LS/results/', data_type, '/FINAL_MODELS_nrmse_nmbe_corr_avg_', transform)
 print(paste0('The output directory is: ', dir))
 setwd(dir)
 cat("\n")
@@ -26,7 +37,7 @@ library(dplyr)
 library(caret)
 library(glmmLasso)
 library(Metrics)
-source('/scratch/kmo265/UAV_scripts/UAV_to_LS_fxns.R')
+source('scripts/UAV_to_LS_fxns.R')
 
 # 1.2 SET PARAMETERS ------------------------------
 
@@ -56,7 +67,7 @@ pfts = c('DECIDUOUS_SHRUBS', 'EVERGREEN_SHRUBS', 'FORBS', 'GRAMINOIDS', 'LICHENS
 
 # 1.3 READ IN DATA ------------------------------
 
-dataDir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/', transform, '/')
+dataDir = paste0('*/UAV_to_LS/results/', data_type, '/', transform, '/')
 
 if(data_type == 'field'){
   predictor_file = 'biomass_field_data_ls.csv'
@@ -71,10 +82,10 @@ if(data_type == 'field'){
 }
 
 # Get predictors
-predictors = read.csv(file.path('/scratch/kmo265/1_UAV_to_LS_final/data', predictor_file), header = T)
+predictors = read.csv(file.path('data/', predictor_file), header = T)
 
 # Get feature correlation data
-corr_all = read.csv(file.path('/scratch/kmo265/1_UAV_to_LS_final/data/', predictor_list_file), header = T)
+corr_all = read.csv(file.path('data/', predictor_list_file), header = T)
 
 # Get best model parameters
 
@@ -670,6 +681,6 @@ for(k in 1:mc_iter){ ### START MONTE CARLO LOOP
   
   } ### END PFT LOOP
 
-  write.csv(coefficients, paste0('glmmLasso_coefficients_finalModels_MCiter', k, '.csv'), row.names = FALSE)
+  if(output_results){write.csv(coefficients, paste0(dir, 'glmmLasso_coefficients_finalModels_MCiter', k, '.csv'), row.names = FALSE)}
 
 } ### END MONTE CARLO LOOP

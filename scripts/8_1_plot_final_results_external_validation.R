@@ -1,3 +1,13 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# Produces plots to compare final model performance across data type and transform combinations as well as plant functional types
+# Uses external validation data
+
+# NOTE: output directory structure not hosted at github
+
 library(dplyr)
 library(tidyr)
 library(yardstick)
@@ -10,8 +20,9 @@ library(Metrics)
 
 # 0. SET OUTPUT DIRECTORY AND GET DATA
 
-dir = '//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/externalValidation'
-setwd(dir)
+output_results = FALSE
+
+dir = '*/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/externalValidation'
 
 validation_FIELD_log = read.csv('external_biomass_data_sample_FIELD_log_nrmse_nmbe_corr_avg_MC_all.csv')
 validation_FIELD_sqrt = read.csv('external_biomass_data_sample_FIELD_sqrt_nrmse_nmbe_corr_avg_MC_all.csv')
@@ -242,17 +253,21 @@ plt =
 
 plt
 
-outName = paste0('externalValidation_field_vs_uav_bigger.png')
+if(output_results){
 
-ggsave(
-  outName,
-  plt,
-  width = 43.18,
-  height = 55.88,
-  units = 'cm',
-  bg = 'white',
-  dpi = 600
-)
+  outName = paste0('externalValidation_field_vs_uav_bigger.png')
+  
+  ggsave(
+    paste0(dir, outName),
+    plt,
+    width = 43.18,
+    height = 55.88,
+    units = 'cm',
+    bg = 'white',
+    dpi = 600
+  )
+
+}
 
 ######################################################################################################
 ######################################################################################################
@@ -397,15 +412,18 @@ plt =
 
 plt
 
-outName = paste0('externalValidation.png')
+if(output_results){
+  
+  outName = paste0('externalValidation.png')
+  
+  ggsave(
+    paste0(dir, outName),
+    plt,
+    width = 40,
+    height = 30,
+    units = 'cm',
+    bg = 'white',
+    dpi = 600
+  )
 
-ggsave(
-  outName,
-  plt,
-  width = 40,
-  height = 30,
-  units = 'cm',
-  bg = 'white',
-  dpi = 600
-)
-
+}

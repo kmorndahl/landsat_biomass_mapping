@@ -1,3 +1,13 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# For each data type, transform and cut number, aggregates coefficient and prediction data across cross-validation folds
+# Plots predicted vs. observed across cross-validation folds and reports RMSE
+
+# NOTE: output directory structure not hosted at github
+
 library(ggplot2)
 library(dplyr)
 library(yardstick)
@@ -12,6 +22,8 @@ library(ggpmisc)
 
 # 1.0 SET PARAMETERS ------------------------------------------------------
 
+output_results = FALSE
+
 missing_cv = 'stop' # Choose what to do if less that 44 files are present i.e. missing file for one or more outer CV folds: 'warn': just warn and continue running, or 'stop': halt code execution
 aggregated_skip = FALSE # Choose what to do if an aggregated file (aggregated across all outer CV folds) ending in '_ALL' is already present: TRUE: skip the cut number for which the aggregate file is already present, FALSE: don't skip, instead overwrite existing file
 
@@ -23,7 +35,7 @@ transform = 'sqrt' # Choose 'sqrt' or 'log'
 
 # 1.1 GET FOLDERS ------------------------------------------------------
 
-dir = paste0('/scratch/kmo265/UAV_to_LS/results/', data_type, '/', transform, '/')
+dir = paste0('*/UAV_to_LS/results/', data_type, '/', transform, '/')
 
 folders = list.files(dir, full.names = TRUE, recursive = FALSE, pattern = '*cut*')
 
@@ -119,8 +131,6 @@ for(folder in folders){ ### START FOLDER LOOP
       
   }
   
-  setwd(folder)
-  
   # 2.2 AGGREGATE FILES ------------------------------------------------------
   
   # Loop through coefficient files
@@ -155,14 +165,18 @@ for(folder in folders){ ### START FOLDER LOOP
   
   # 2.3 SAVE AGGREGATED FILES ------------------------------------------------------
   
-  coef_name = paste0('glmmLasso_coefficients_', file_name, '_ALL.csv')
-  pred_name = paste0('glmmLasso_predictions_', file_name, '_ALL.csv')
+  if(output_results){
   
-  write.csv(coefTotal, coef_name, row.names = FALSE)
-  write.csv(predTotal, pred_name, row.names = FALSE)
-
-  print('Aggregated files saved')
-  cat("\n")
+    coef_name = paste0('glmmLasso_coefficients_', file_name, '_ALL.csv')
+    pred_name = paste0('glmmLasso_predictions_', file_name, '_ALL.csv')
+    
+    write.csv(coefTotal, paste0(folder, coef_name), row.names = FALSE)
+    write.csv(predTotal, paste0(folder, pred_name), row.names = FALSE)
+  
+    print('Aggregated files saved')
+    cat("\n")
+  
+  }
   
   ######################################################################################################
   ######################################################################################################
@@ -252,15 +266,19 @@ for(folder in folders){ ### START FOLDER LOOP
   
   RMSE_corrected
   
-  outName = paste0('glmmLasso_preds_', file_name, '.png')
+  if(output_results){
   
-  ggsave(
-    outName,
-    RMSE_corrected,
-    width = 40,
-    height = 30,
-    units = 'cm'
-  )
+    outName = paste0('glmmLasso_preds_', file_name, '.png')
+    
+    ggsave(
+      paste0(folder, outName),
+      RMSE_corrected,
+      width = 40,
+      height = 30,
+      units = 'cm'
+    )
+  
+  }
   
   cat("\n")
   

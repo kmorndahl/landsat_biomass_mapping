@@ -1,3 +1,13 @@
+######################################################################################################
+######################################################################################################
+
+# CODE DESCRIPTION
+
+# Produces plots to compare final model performance across data type and transform combinations as well as plant functional types
+# Uses cross-validation data
+
+# NOTE: output directory structure not hosted at github
+
 library(dplyr)
 library(tidyr)
 library(yardstick)
@@ -9,13 +19,14 @@ library(ggpmisc)
 
 # 0. SET OUTPUT DIRECTORY AND GET DATA
 
-validation_FIELD_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/log/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
-validation_FIELD_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/field/sqrt/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
-validation_UAV_log = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/log/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
-validation_UAV_sqrt = read.csv('//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/UAV/sqrt/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
+output_results = FALSE
 
-dir = '//minim.hpc.nau.edu/scratch/kmo265/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/crossValidation'
-setwd(dir)
+validation_FIELD_log = read.csv('*/UAV_to_LS/results/field/log/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
+validation_FIELD_sqrt = read.csv('*/UAV_to_LS/results/field/sqrt/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
+validation_UAV_log = read.csv('*/UAV_to_LS/results/UAV/log/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
+validation_UAV_sqrt = read.csv('*/UAV_to_LS/results/UAV/sqrt/glmmLasso_BESTpredictions_nrmse_nmbe_corr_avg.csv')
+
+dir = '*/UAV_to_LS/results/FINAL_MODELS_nrmse_nmbe_corr_MC/crossValidation'
 
 ######################################################################################################
 ######################################################################################################
@@ -206,17 +217,21 @@ plt =
 
 plt
 
-outName = 'CVresults_field_vs_uav.png'
+if(output_results){
 
-ggsave(
-  outName,
-  plt,
-  width = 43.18,
-  height = 55.88,
-  units = 'cm',
-  bg = 'white',
-  dpi = 600
-)
+  outName = 'CVresults_field_vs_uav.png'
+  
+  ggsave(
+    paste0(dir, outName),
+    plt,
+    width = 43.18,
+    height = 55.88,
+    units = 'cm',
+    bg = 'white',
+    dpi = 600
+  )
+
+}
 
 ######################################################################################################
 ######################################################################################################
@@ -342,15 +357,20 @@ plt =
 
 plt
 
-outName = 'CVresults.png'
 
-ggsave(
-  outName,
-  plt,
-  width = 40,
-  height = 30,
-  units = 'cm',
-  bg = 'white',
-  dpi = 600
-)
+if(output_results){
+    
+  outName = 'CVresults.png'
+  
+  ggsave(
+    paste0(dir, outName),
+    plt,
+    width = 40,
+    height = 30,
+    units = 'cm',
+    bg = 'white',
+    dpi = 600
+  )
+
+}
 

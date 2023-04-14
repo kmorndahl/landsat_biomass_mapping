@@ -1,10 +1,21 @@
 ######################################################################################################
 ######################################################################################################
 
+# CODE DESCRIPTION
+
+# This script tidies the field biomass harvest data
+#   - Removes outlier quadrats
+#   - Adds location data
+#   - Converts biomass units
+
+######################################################################################################
+######################################################################################################
+
 # SET OUTPUT DIRECTORY
 
-dir = '//minim.hpc.nau.edu/scratch/kmo265/1_UAV_to_LS_final/data/'
-setwd(dir)
+output_results = FALSE
+
+outPath = 'data/'
 
 outName = 'biomass_field_data_lat_long.csv'
 
@@ -18,10 +29,10 @@ outName = 'biomass_field_data_lat_long.csv'
 library(tidyverse)
 
 # Read in field data
-biomassData = read.csv('biomass_field_UAV_data_wide.csv')
+biomassData = read.csv(paste0(outPath, 'biomass_field_UAV_data_wide.csv'))
 
 # Read in quadrat data
-quads = read.csv('UAV_quadrats.csv')
+quads = read.csv(paste0(outPath, 'UAV_quadrats.csv'))
 
 # 1.2 TIDY --------------------------------------------------------------------------------------------------------------------------------
 
@@ -65,4 +76,4 @@ biomass_final$biomass_kg_m2 = biomass_final$biomass_g_m2 / 1000 # kg/m2
 
 # 4. SAVE -------------------------------------------------------------------------------------------------------------------------------
 
-write.csv(biomass_final, outName, row.names = FALSE)
+if(output_results){write.csv(biomass_final, paste(outPath, outName), row.names = FALSE)}

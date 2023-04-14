@@ -2,7 +2,7 @@
 // GOOGLE EARTH ENGINE SCRIPT TO AGGREGATE 1 M UAV BIOMASS MAPS TO 30 M RESOLUTION - CONFIDENCE INTERVALS //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'biomass_ci_total_1m'
+// RUN FOR EACH PLANT FUNCTIONAL TYPE, REPLACING 'biomass_ci_total_1m' WITH DESIRED PFT
 // DUE TO MEMORY ISSUES IN GEE, IT IS BETTER TO RUN SCRIPTS SEPARATELY AS DECRIBED ABOVE RATHER THAN .MAP OVER PFTs
 
 // =================== IMPORTS ===================
